@@ -9,6 +9,11 @@
  * hardcoded script path with a whitelisted set of no-argument,
  * one-argument or fixed-three-argument commands.
  *
+ * The script is opened once, checked and locked through that open file, and
+ * run from that same open file (fexecve), so it can't be swapped for another
+ * file between the check and the run. bin/ is owned by the package user, so
+ * without this the package user could replace the script and get root.
+ *
  * It only checks the verb and how many arguments it has (and that none is
  * absurdly long). What the arguments contain is checked by
  * app_mover_api.sh, which is what runs as root.
@@ -16,6 +21,8 @@
 
 #define _GNU_SOURCE
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -82,14 +89,44 @@ int main(int argc, char *argv[])
     setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin:/usr/syno/bin:/usr/syno/sbin", 1);
     setenv("HOME", "/root", 1);
 
-    if (argc == 2) {
-        execl(TARGET_SCRIPT, TARGET_SCRIPT, cmd, (char *)NULL);
-    } else if (argc == 5) {
-        execl(TARGET_SCRIPT, TARGET_SCRIPT, cmd, argv[2], argv[3], argv[4], (char *)NULL);
-    } else {
-        execl(TARGET_SCRIPT, TARGET_SCRIPT, cmd, argv[2], (char *)NULL);
+    /* Open the script once. No O_CLOEXEC: the kernel runs a script through
+     * /dev/fd/N, so the descriptor has to survive the exec. */
+    int fd = open(TARGET_SCRIPT, O_RDONLY | O_NOFOLLOW);
+    if (fd < 0) {
+        perror("appmover-helper: cannot open script");
+        return 1;
+    }
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        fprintf(stderr, "appmover-helper: script is not a regular file\n");
+        return 1;
+    }
+    /* postinst runs as the package user, so on a fresh install the script is
+     * owned by it. Lock it now, through the open descriptor. From here on
+     * only root can change it. */
+    if (st.st_uid != 0) {
+        if (fchown(fd, 0, st.st_gid) != 0 || fchmod(fd, 0555) != 0 ||
+            fstat(fd, &st) != 0) {
+            perror("appmover-helper: cannot secure script");
+            return 1;
+        }
+    }
+    if (st.st_uid != 0 || (st.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+        fprintf(stderr, "appmover-helper: script is not root owned and write protected\n");
+        return 1;
     }
 
-    perror("appmover-helper: execl failed");
+    char *args[7];
+    int n = 0;
+    args[n++] = (char *)TARGET_SCRIPT;
+    args[n++] = (char *)cmd;
+    for (int i = 2; i < argc; i++)
+        args[n++] = argv[i];
+    args[n] = NULL;
+
+    extern char **environ;
+    fexecve(fd, args, environ);
+
+    perror("appmover-helper: exec failed");
     return 1;
 }

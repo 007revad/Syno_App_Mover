@@ -19,7 +19,6 @@
 #   jobresults                        the text for the results window
 #   getsettings
 #   setsettings backuppath buffer skip_minutes     POST
-#   diag                              TEMPORARY. Remove before releasing.
 #----------------------------------------------------------
 
 # --------- 1. Common variables and path calculations -------------
@@ -103,21 +102,42 @@ run_list() {
 # without being logged in to DSM (Toolbox's pingtoolbox relies on that), so
 # every action except init has to be authorised here.
 #
-# TODO(auth): this is the one place that has to check that the caller is a
-# logged in DSM administrator, and it isn't written yet because it needs a
-# mechanism verified on a real DSM (how do your other packages do it?).
-# Until then it fails closed. To try the package without it, as root:
-#     touch /var/packages/App_Mover/var/state/allow_unauthenticated
-# (DSM 6: .../etc/state/...). Only root can create that file, and it
-# opens the package to anyone who can reach the NAS - testing only.
-# The same goes for config's "allUsers": any DSM user can open the window,
-# so the check has to be for an administrator, not just a login.
+# The caller must be a logged in DSM administrator:
+#  - Who is calling: /usr/syno/synoman/webman/modules/authenticate.cgi prints
+#    the logged in user's name. DSM validates the session itself, from the
+#    session cookie plus the X-SYNO-TOKEN header the DSM desktop sends. With
+#    no valid session it prints nothing. Observed on DSM 7: the app's own
+#    requests (cookie + token) print the name; a request with no session, or
+#    a plain page load with a cookie but no token, prints nothing.
+#  - Is it an administrator: the name is in the "administrators" line of
+#    /etc/group (world readable). The CGI user can't run synogroup (permission
+#    denied), so the file is read instead. Local accounts only.
+#  - Any failure, or anything unexpected, is "not authorised".
+# config's "allUsers" lets any DSM user open the window, which is why this
+# checks for an administrator and not just a login.
+
+is_admin() {
+    # $1 = user name, already checked against a strict pattern by the caller
+    awk -F: -v u="$1" '
+        $1=="administrators" {
+            n=split($4,a,",")
+            for (i=1;i<=n;i++) if (a[i]==u) found=1
+        }
+        END { exit !found }' /etc/group
+}
 
 require_auth() {
-    if [[ -f "${VAR_DIR}/state/allow_unauthenticated" ]]; then
-        return 0
+    local user
+    user=$(/usr/syno/synoman/webman/modules/authenticate.cgi 2>/dev/null | head -n1)
+
+    if [[ "$user" =~ ^[A-Za-z0-9._@-]+$ ]]; then
+        if is_admin "$user"; then
+            return 0
+        fi
+        log "[ERROR] ${ACTION}: not authorised (user=${user} is not an administrator)"
+    else
+        log "[ERROR] ${ACTION}: not authorised (no valid DSM session)"
     fi
-    log "[ERROR] ${ACTION}: not authorised"
     json_response false "Not authorised" ""
     exit 0
 }
@@ -277,23 +297,6 @@ setsettings)
     else
         json_response true "" "${RUN_OUT}"
     fi
-    ;;
-
-diag)
-    # TEMPORARY - for testing what the CGI user can do. Remove it before
-    # releasing (it shows the CGI user and paths).
-    # Open:  /webman/3rdparty/App_Mover/api.cgi?action=diag
-    DIAG="user: $(id 2>&1)"$'\n'
-    DIAG+="DSM major version: $(/usr/syno/bin/synogetkeyvalue /etc.defaults/VERSION majorversion 2>&1)"$'\n'
-    DIAG+="helper: $(ls -l "$HELPER" 2>&1)"$'\n'
-    run_privileged getsettings
-    DIAG+="helper getsettings: rc=${RUN_RC} ${RUN_OUT:0:200}"$'\n'
-    for DIAG_VERB in listvolumes listpackages listbackuppackages listbackups "databaseinfo /volume1"; do
-        read -ra DIAG_ARGS <<< "$DIAG_VERB"
-        DIAG_OUT="$(bash "$LIST_SCRIPT" "${DIAG_ARGS[@]}" 2>&1)"
-        DIAG+="${DIAG_VERB}: rc=$? ${DIAG_OUT:0:200}"$'\n'
-    done
-    json_response true "$DIAG" ""
     ;;
 
 *)

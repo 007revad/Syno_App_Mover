@@ -25,6 +25,9 @@
 PKG_NAME="App_Mover"
 PKG_ROOT="/var/packages/${PKG_NAME}"
 BIN_DIR="${PKG_ROOT}/target/bin"
+# This script's own path. Not $0: appmover-helper runs it from an open file
+# descriptor, so $0 is /dev/fd/N there.
+SELF="${BIN_DIR}/app_mover_api.sh"
 
 # Same PATH appmover-helper sets (DSM 6 calls this script directly)
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/syno/bin:/usr/syno/sbin"
@@ -81,17 +84,30 @@ api_log(){
 #------------------------------------------------------------------------------
 # State folder
 
-ensure_state_dir(){ 
-    # Must be a real folder owned by root. If it isn't (the package user
-    # renamed it and made its own, or swapped it for a symlink) move it
-    # out of the way and start again.
-    if [[ -L $STATE_DIR ]] || { [[ -e $STATE_DIR ]] && { [[ ! -d $STATE_DIR ]] || [[ "$(stat -c '%u' "$STATE_DIR")" != "0" ]]; }; }; then
-        api_log "state folder was not a root owned folder - moved to ${STATE_DIR}.bad.$$"
+state_dir_ok(){
+    # A real folder (not a symlink), owned by root, that neither its group
+    # nor anyone else can write to
+    [[ -d $STATE_DIR && ! -L $STATE_DIR ]] || return 1
+    [[ "$(stat -c '%u' "$STATE_DIR")" == "0" ]] || return 1
+    (( (8#$(stat -c '%a' "$STATE_DIR") & 8#022) == 0 ))
+}
+
+ensure_state_dir(){
+    # Must be a real folder owned by root that only root can write to. If it
+    # isn't (the package user renamed it and made its own, or swapped it for
+    # a symlink, or it was re-owned or made group writable) move it out of
+    # the way and start again.
+    if [[ -e $STATE_DIR || -L $STATE_DIR ]] && ! state_dir_ok; then
+        api_log "state folder was not a root owned folder that only root can write to - moved to ${STATE_DIR}.bad.$$"
         mv -T "$STATE_DIR" "${STATE_DIR}.bad.$$" 2>/dev/null || rm -f "$STATE_DIR"
     fi
-    if [[ ! -d $STATE_DIR ]]; then
+    if [[ ! -e $STATE_DIR && ! -L $STATE_DIR ]]; then
         mkdir -m 755 "$STATE_DIR" || fail "Failed to create $STATE_DIR"
     fi
+    # If moving it aside failed (the package user owns var/, so it could fill
+    # it with folders named like the .bad ones) don't carry on and write
+    # into a folder that isn't trusted.
+    state_dir_ok || fail "The state folder is not safe to use"
     if [[ ! -d $LOG_DIR ]]; then
         mkdir -m 755 "$LOG_DIR" || fail "Failed to create $LOG_DIR"
     fi
@@ -106,7 +122,8 @@ ensure_conf(){
         /usr/syno/bin/synosetkeyvalue "$CONF_FILE" skip_minutes 360
     fi
     # Read by the list helper, which runs as the package user. No secrets in it.
-    chown root:root "$CONF_FILE" 2>/dev/null
+    # root:<package name>, because DSM 7 doesn't accept root:root for package files.
+    chown "root:${PKG_NAME}" "$CONF_FILE" 2>/dev/null
     chmod 644 "$CONF_FILE" 2>/dev/null
 }
 
@@ -116,17 +133,19 @@ ensure_conf(){
 # postinst runs as the package user, so everything under bin/ starts out
 # owned by it and could be rewritten in place even though bin/ is 555.
 # This script only ever runs as root, so on every call it takes ownership
-# of anything under bin/ that isn't root's and locks it.
+# of anything under bin/ that isn't root:<package name> and locks it.
+# (root:<package name> and not root:root, because DSM 7 doesn't accept
+# root:root for package files.)
 #
 # LIMITATION (accepted, as in cpu_temp_api.sh): this cannot protect this
 # script itself if it was replaced before it first ran.
 self_heal(){ 
     local f owner
-    for f in "$BIN_DIR"/*.sh "$BIN_DIR"/*.py "$0"; do
+    for f in "$BIN_DIR"/*.sh "$BIN_DIR"/*.py "$SELF"; do
         [[ -f "$f" ]] || continue
-        owner="$(stat -c '%U' "$f" 2>/dev/null)"
-        if [[ "$owner" != "root" ]]; then
-            chown root:root "$f" 2>/dev/null
+        owner="$(stat -c '%U:%G' "$f" 2>/dev/null)"
+        if [[ "$owner" != "root:${PKG_NAME}" ]]; then
+            chown "root:${PKG_NAME}" "$f" 2>/dev/null
             chmod 555 "$f" 2>/dev/null
             api_log "self-heal secured $f (was owned by $owner)"
         fi
@@ -272,7 +291,7 @@ do_startjob(){
     api_log "job $id: $mode ${dest} ${apps}"
 
     # Detached: carries on if the browser is closed
-    APP_MOVER_INTERNAL=1 setsid bash "$0" _runjob "$mode" "$dest" "$apps" >> "$JOB_LOG" 2>&1 < /dev/null &
+    APP_MOVER_INTERNAL=1 setsid bash "$SELF" _runjob "$mode" "$dest" "$apps" >> "$JOB_LOG" 2>&1 < /dev/null &
 
     # Wait for the job to say it has started
     for _ in {1..30}; do
@@ -461,7 +480,7 @@ do_setsettings(){
     /usr/syno/bin/synosetkeyvalue "$CONF_FILE" backuppath "$backuppath"
     /usr/syno/bin/synosetkeyvalue "$CONF_FILE" buffer "$buffer"
     /usr/syno/bin/synosetkeyvalue "$CONF_FILE" skip_minutes "$skip"
-    chown root:root "$CONF_FILE" 2>/dev/null
+    chown "root:${PKG_NAME}" "$CONF_FILE" 2>/dev/null
     chmod 644 "$CONF_FILE" 2>/dev/null
     api_log "settings saved"
     echo '{"saved":true}'
