@@ -1,0 +1,26 @@
+{
+  "package": "App_Mover",
+  "name": "App_Mover",
+  "version": "1.0.0",
+  "description": "Move, back up and restore Synology packages",
+  "target": "./src",
+  "install_type": "package",
+  "install_dep_packages": "",
+  "support_conf_folder": "yes",
+  "synology": {
+    "maintainer": "007revad",
+    "maintainer_url": "https://github.com/007revad",
+    "distributor": "007revad",
+    "distributor_url": "https://github.com/007revad/Syno_App_Mover",
+    "support_url": "https://github.com/007revad/Syno_App_Mover/issues",
+    "help_url": "https://github.com/007revad/Syno_App_Mover",
+    "os_min_ver": "7.0-40337",
+    "os_max_ver": "9.9-99999",
+    "arch": "x86_64",
+    "displayname": "App Mover",
+    "dsmuidir": "ui",
+    "dsmappname": "SYNO.SDS._ThirdParty.App.App_Mover",
+    "thirdparty": "yes",
+    "beta": "no"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "main.js": {
+    "SYNO.SDS._ThirdParty.App.App_Mover": {
+      "type": "app",
+      "title": "App Mover",
+      "desc": "Move, back up and restore Synology packages",
+      "icon": "images/icon_{0}.png",
+      "appWindow": "SYNO.SDS.App_Mover.MainWindow",
+      "allowMultiInstance": false,
+      "allowStandalone": true,
+      "allUsers": true,
+      "grantPrivilege": "all",
+      "advanceGrantPrivilege": true
+    },
+    "SYNO.SDS.App_Mover.MainWindow": {
+      "type": "lib",
+      "title": "App Mover",
+      "icon": "images/icon_{0}.png"
+    }
+  }
+}
