@@ -1,0 +1,189 @@
+name: TEST Build App Mover Test Package
+
+env:
+  # --- Edit these when reusing for a different package ---
+  REPO_NAME: "Syno_App_Mover"
+  SPK_PREFIX: "App_Mover"
+  HELPER_NAME: "appmover"
+
+  # --- Runner config, shouldn't need to change ---
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_tag:
+        # Set zip file name
+        description: 'Version for this test build (also used to name the downloadable artifact zip - never published)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-test-spk:
+    name: Build Test Package
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # These 4 cover all models that can use DSM 7
+        arch: ['kvmx64', 'rtd1296', 'armada38x', 'evansport']
+        #dsm: ['7.0','7.1','7.2','7.3',"7.4"]
+        dsm: ['7.0']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Get test tag
+        id: get_tag
+        run: |
+          test_tag="${{ github.event.inputs.test_tag }}"
+          if [ -z "$test_tag" ]; then
+            test_tag="test-${{ github.run_number }}"
+          fi
+          echo "new_tag=$test_tag" >> $GITHUB_OUTPUT
+
+      - name: Determine DSM suffix
+        id: dsm_suffix
+        run: |
+          # Count how many DSM versions are in the matrix
+          dsm_list='${{ toJSON(matrix.dsm) }}'
+          count=$(echo "$dsm_list" | jq 'if type == "array" then length else 1 end')
+          current="${{ matrix.dsm }}"
+          if [ "$count" -eq 1 ] && [ "$current" = "7.0" ]; then
+            echo "suffix=DSM-7.x" >> $GITHUB_OUTPUT
+          else
+            echo "suffix=DSM-${current}" >> $GITHUB_OUTPUT
+          fi
+
+      # Synology's own platform codes (kvmx64, rtd1296, ...) aren't
+      # meaningful to someone picking a download - map to the arch
+      # label people actually recognize.
+      - name: Map arch to display label
+        id: arch_label
+        run: |
+          case "${{ matrix.arch }}" in
+            kvmx64) label="x86_64" ;;
+            rtd1296) label="armv8" ;;
+            armada38x) label="armv7" ;;
+            evansport) label="i686" ;;
+            *) echo "::error::No display label mapped for arch '${{ matrix.arch }}'"; exit 1 ;;
+          esac
+          echo "label=$label" >> $GITHUB_OUTPUT
+
+      # NEW: what actually goes in INFO's arch= field
+      - name: Map arch to INFO install-arch list
+        id: install_arch
+        run: |
+          case "${{ matrix.arch }}" in
+            kvmx64) archlist="x86_x64" ;;
+            rtd1296) archlist="armv8" ;;
+            armada38x) archlist="alpine alpine4k armada370 armada375 armada38x armadaxp monaco comcerto2k" ;;
+            evansport) archlist="evansport" ;;
+            *) echo "::error::No install-arch list mapped for '${{ matrix.arch }}'"; exit 1 ;;
+          esac
+          echo "archlist=$archlist" >> $GITHUB_OUTPUT
+
+      - name: Synology Package Builder Github Action
+        uses: 007revad/synology-package-builder@main
+        with:
+          dsm: ${{ matrix.dsm }}
+          arch: ${{ matrix.arch }}
+          output: ./dist
+
+      # SynoBuild/PkgCreate.py don't reliably fail the Action when our
+      # custom post-make helper-compile step (in stubs/SynoBuildConf/build)
+      # errors out - the log shows Synology's own tooling can still emit
+      # a .spk in that case. Check the actual built artifact instead of
+      # trusting the exit code chain through Synology's build driver.
+      - name: Verify setuid helper compiled correctly
+        run: |
+          set -euo pipefail
+
+          case "${{ matrix.arch }}" in
+            kvmx64)    expect_arch="x86-64" ;;
+            rtd1296)   expect_arch="ARM aarch64" ;;
+            armada38x) expect_arch="ARM" ;;
+            evansport) expect_arch="Intel 80386" ;;
+            *) echo "::error::No expected ELF arch mapped for '${{ matrix.arch }}'"; exit 1 ;;
+          esac
+
+          spk=$(ls ./dist/*.spk | grep -v _debug | head -n1)
+          if [ -z "$spk" ]; then
+            echo "::error::No non-debug .spk found in ./dist"
+            exit 1
+          fi
+
+          workdir=$(mktemp -d)
+          tar -xf "$spk" -C "$workdir" package.tgz
+          tar -xf "$workdir/package.tgz" -C "$workdir" bin/helper/${HELPER_NAME}-helper
+
+          helper="$workdir/bin/helper/${HELPER_NAME}-helper"
+          if [ ! -s "$helper" ]; then
+            echo "::error::${HELPER_NAME}-helper missing or empty in $spk - helper compile likely failed silently"
+            exit 1
+          fi
+
+          file_out=$(file -b "$helper")
+          echo "${HELPER_NAME}-helper: $file_out"
+          case "$file_out" in
+            *"$expect_arch"*) echo "OK: matches expected arch '$expect_arch'" ;;
+            *)
+              echo "::error::${HELPER_NAME}-helper in $spk doesn't look like '$expect_arch' (got: $file_out) - wrong-arch compiler was likely used"
+              exit 1
+              ;;
+          esac
+
+          rm -rf "$workdir"
+
+      - name: Remove debug spk and rename package
+        run: |
+          ls -l ./dist
+          rm -f ./dist/*_debug.spk
+          for f in ./dist/*.spk; do
+            mv "$f" "./dist/${SPK_PREFIX}-${{ steps.arch_label.outputs.label }}-${{ steps.get_tag.outputs.new_tag }}-${{ steps.dsm_suffix.outputs.suffix }}.spk"
+          done
+          ls -l ./dist
+
+      - name: Fix arch field in INFO for non-x86_64 DSM 7 platforms
+        if: matrix.arch != 'kvmx64'
+        run: |
+          set -euo pipefail
+          spk=$(ls ./dist/*.spk | head -n1)
+          tmpdir=$(mktemp -d)
+          tar -xf "$spk" -C "$tmpdir"
+          sed -i '/^arch=/s/.*/arch="${{ steps.arch_label.outputs.label }}"/' "$tmpdir/INFO"
+          tar -cf "$spk" -C "$tmpdir" $(ls "$tmpdir")
+          rm -rf "$tmpdir"
+
+      # Only needs to happen once - the noarch/DSM6 output doesn't
+      # depend on which arch built it, and running it per matrix leg
+      # would just produce duplicate, colliding artifacts.
+      - name: Create noarch package for DSM 6
+        if: matrix.arch == 'kvmx64'
+        run: |
+          for f in ./dist/${SPK_PREFIX}-${{ steps.arch_label.outputs.label }}-*.spk; do
+            dsm6="${f/${{ steps.arch_label.outputs.label }}/noarch}"
+            dsm6="${dsm6/${{ steps.dsm_suffix.outputs.suffix }}/DSM-6.x}"
+            tmpdir=$(mktemp -d)
+            tar -xf "$f" -C "$tmpdir"
+            sed -i 's/arch=".*"/arch="noarch"/' "$tmpdir/INFO"
+            sed -i -E 's/os_min_ver="7\.0-[0-9]+"/os_min_ver="6.0-7321"/' "$tmpdir/INFO"
+            sed -i 's/os_max_ver="9.9-99999"/os_max_ver="6.9-99999"/' "$tmpdir/INFO"
+            sed -i -E 's/install_dep_packages="[^"]*"/install_dep_packages="py3k>=3.8.6-0154"/' "$tmpdir/INFO"
+            rm -rf "$tmpdir/WIZARD_UIFILES"
+            rm -rf "$tmpdir/conf"
+            rm -rf "$tmpdir/helper"
+            tar -cf "$dsm6" -C "$tmpdir" $(ls "$tmpdir")
+            rm -rf "$tmpdir"
+          done
+          ls -l ./dist
+
+      - name: Upload Package
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ env.SPK_PREFIX }}-${{ steps.arch_label.outputs.label }}-${{ steps.dsm_suffix.outputs.suffix }}-${{ steps.get_tag.outputs.new_tag }}
+          path: ./dist/*.spk
