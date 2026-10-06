@@ -12,7 +12,7 @@
 #   listvolumes                       mounted volumes with free space
 #   listpackages [volume]             apps Move can move
 #   listbackuppackages                apps Backup can back up
-#   listbackups                       backed up apps Restore can restore
+#   listbackups                       backed up apps Restore can restore (as root)
 #   databaseinfo dest                 what moving @database to dest would do
 #   startjob mode dest apps           POST. mode is move, backup or restore
 #   jobstatus job                     job is <job id>:<offset>, id 0 = current
@@ -227,7 +227,8 @@ listbackuppackages)
     ;;
 
 listbackups)
-    run_list listbackups
+    # Needs root: the package user can't see into the backup location
+    run_privileged listbackups
     if [ "$RUN_RC" -ne 0 ]; then
         log "[ERROR] listbackups failed (rc=${RUN_RC}): ${RUN_OUT}"
         json_response false "${RUN_OUT:-Could not list backups}" ""

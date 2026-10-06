@@ -95,6 +95,11 @@ volume_space(){
 }
 
 excluded_pkg(){ 
+    # Skip App_Mover as it can't move, backup or restore itself
+    if [[ $1 == "App_Mover" ]]; then
+        return 0
+    fi
+    # Skip docker and container manager as they cause too many issues
     if [[ $no_docker == "yes" ]]; then
         if [[ $1 == "ContainerManager" ]] || [[ $1 == "Docker" ]]; then
             return 0

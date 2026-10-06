@@ -13,6 +13,7 @@
 #   app_mover_api.sh jobstatus <job id>:<offset>      (job id 0 = current job)
 #   app_mover_api.sh jobresults
 #   app_mover_api.sh getsettings
+#   app_mover_api.sh listbackups
 #   app_mover_api.sh setsettings <backuppath> <buffer GB> <skip minutes>
 #   app_mover_api.sh selfheal
 #   app_mover_api.sh removeschedule
@@ -45,6 +46,7 @@ else
 fi
 
 MOVER="${BIN_DIR}/syno_app_mover.sh"
+LIST_SCRIPT="${BIN_DIR}/syno_app_mover_list.sh"
 TASK_SETUP="${BIN_DIR}/task_setup.sh"
 API_LOG_FILE="${VAR_DIR}/api.log"
 TASK_NAME="App Mover Backup"
@@ -210,6 +212,9 @@ validate_job(){
             [[ $app =~ ^[A-Za-z0-9._+-]+$ ]] || { echo "Invalid app name '$app'"; return 1; }
             if [[ $app == "ContainerManager" ]] || [[ $app == "Docker" ]]; then
                 echo "Docker and Container Manager are not supported"; return 1
+            fi
+            if [[ $app == "$PKG_NAME" ]]; then
+                echo "App Mover can't move, back up or restore itself"; return 1
             fi
             if [[ $mode == "restore" ]]; then
                 backuppath="$(get_backuppath)"
@@ -526,6 +531,14 @@ case "$ACTION" in
         ;;
     getsettings)
         do_getsettings
+        ;;
+    listbackups)
+        # Has to run as root: the package user can't see into the backup
+        # location (a shared folder only lets in the users its permissions
+        # name). The list script only reads, and prints just JSON.
+        [[ $# -eq 0 ]] || fail "listbackups takes no arguments"
+        out="$(bash "$LIST_SCRIPT" listbackups 2>&1)" || fail "$out"
+        printf '%s\n' "$out"
         ;;
     setsettings)
         [[ $# -eq 3 ]] || fail "setsettings needs 3 values"
