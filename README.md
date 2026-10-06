@@ -1,4 +1,4 @@
-# <img src="images/pkg_center_64_blurr.png" width="54"> Synology app mover
+# <img src="images/icon.png" width="54"> Syno App Mover package
 
 <a href="https://github.com/007revad/Synology_app_mover/releases"><img src="https://img.shields.io/github/release/007revad/Synology_app_mover.svg"></a>
 ![Badge](https://hitscounter.dev/api/hit?url=https%3A%2F%2Fgithub.com%2F007revad%2FSynology_app_mover&label=Visitors&icon=github&color=%23198754&message=&style=flat&tz=Australia%2FSydney)
