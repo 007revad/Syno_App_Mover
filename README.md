@@ -8,16 +8,14 @@
 
 ### Description
 
-Easily move Synology packages from one volume to another volume
-
-You just select the package and the destination volume and the script will stop the app, move it, update the symlinks then start the app.
+Easily move Synology packages from one volume to another volume, or backup and restore them.
 
 Handy for moving packages to an SSD volume, or to another volume so you can delete the original volume.
 
-**Now** includes [Backup and Restore modes](/images/backup.png).
-
   - Supports DSM 7. Not fully tested with DSM 6.
   - If backing up to a USB drive the partition's file system should be ext3, ext4 of btrfs.
+
+Container Manager and Docker are currently excluded because they can cause issues.
 
 ### Packages confirmed working
 
@@ -161,129 +159,22 @@ The icons in this table are [Copyright © 2004-2026 Synology Inc.](https://kb.sy
 
 </details>
 
-### Download the script
+### How to install the package
 
-1. Download the latest version _Source code (zip)_ from https://github.com/007revad/Synology_app_mover/releases
-2. Save the download zip file to a folder on the Synology.
-3. Unzip the zip file.
+There are 2 ways to install the package:
 
-### Set backup location
+**Directly from Package Center**
 
-If you want to use use the [backup and restore options](/images/backup.png) you need edit the included **syno_app_mover.conf** file to set the location to backup to.
+1. Add [007revad Synology Package Source](https://github.com/007revad/Synology_package_source) to package Center.
+2. Click on the Community section in Package Center and install the package.
 
-The **syno_app_mover.conf** file must be in the same folder as the **syno_app_mover.sh file**.
+<p align="center"><kbd><img src="/images/pkg_center.png"></kbd></p>
 
-### Settings in syno_app_mover.conf
-```YAML
-# buffer is used when checking if target volume has enough space
-# Add 50 GB buffer so we don't fill the target volume
-
-buffer=50
-
-# The backuppath is only used by Backup and Restore modes
-# backuppath should be in the format of /volume/sharename/folder
-# For example:
-# backuppath="/volume1/backups"
-#
-# Note: The script will create a syno_app_mover folder in backuppath
-
-backuppath="/volume1/backups"
-
-# Skip backup if previous backup was done less than x minutes ago
-# Set to "0" to always backup
-# skip_minutes is in minutes
-
-skip_minutes=360
-
-# exclude setting for use when auto="all" option is used to skip specified apps
-# For example:
-# exclude="ContainerManager"
-# exclude="DownloadStation,ContainerManager,HyperBackup"
-#
-# Note: You need to use the app's system name
-# Run syno_app_mover.sh with the --list option to see your app's system names
-
-exclude=
-
-# For Docker or Container Manager's container settings json exports
-# Set delete_older to age in days before old exports are deleted
-# Set ignored_containers to a list of containers to not export settings
-# For example:
-# delete_older=7
-# ignored_containers="libraspeed-1,netdata"
-#
-# Note you need use the container's docker name. To see their names via SSH use:
-# sudo docker ps -a --format "{{.Names}}"
-
-delete_older=30
-ignored_containers=
-```
-
-### To run the script via SSH
-
-[How to enable SSH and login to DSM via SSH](https://kb.synology.com/en-global/DSM/tutorial/How_to_login_to_DSM_with_root_permission_via_SSH_Telnet)
-
-```YAML
-sudo -s /volume1/scripts/syno_app_mover.sh
-```
-
-**Note:** Replace /volume1/scripts/ with the path to where the script is located.
-
-### Options when running the script <a name="options"></a>
-
-There are optional flags you can use when running the script:
-```YAML
-  -h, --help            Show this help message
-  -v, --version         Show the script version
-      --autoupdate=AGE  Auto update script (useful when script is scheduled)
-                          AGE is how many days old a release must be before
-                          auto-updating. AGE must be a number: 0 or greater
-
-      --auto=APP        Automatically backup APP (for scheduling backups)
-                          APP can be a single app or a comma separated list
-                          APP can also be 'all' to backup all apps (except 
-                          any you excluded in the syno_app_mover.conf)
-                          Examples:
-                          --auto=radarr
-                          --auto=Calender,ContainerManager,radarr
-                          --auto=all
-
-                          APP names need to be the app's system name
-                          View the system names with the --list option
-
-      --restore=APP     Automatically restore APP (for scripted restores)
-                          APP can be a single app or a comma separated list
-                          APP can also be 'all' to restore every backed up
-                          app that is currently installed
-                          Examples:
-                          --restore=radarr
-                          --restore=Calender,ContainerManager,radarr
-                          --restore=all
-
-                          APP names need to be the app's system name
-                          View the system names with the --list option
-
-                          Restore always restores an app back to the volume
-                          it's currently installed on (there's no --dest
-                          option) and the app must already be installed
-
-      --list            Display installed apps' system names
-```
-
-### Troubleshooting
-
-If the script won't run check the following:
-
-1. Make sure you download the zip file and unzipped it to a folder on your Synology (not on your computer).
-2. If the path to the script contains any spaces you need to enclose the path/scriptname in double quotes:
-   ```YAML
-   sudo -s "/volume1/my scripts/syno_app_mover.sh"
-   ```
-3. Make sure you unpacked the zip or rar file that you downloaded and are trying to run the syno_app_mover.sh file.
-4. Set the script file as executable:
-   ```YAML
-   sudo chmod +x "/volume1/scripts/syno_app_mover.sh"
-   ```
+**Or download the package and install it manually**
+1. Download the latest version .spk file from https://github.com/007revad/Syno_App_Mover/releases and save it to your Synology.
+2. In Package Center click on Manual Install.
+3. Browse to where you downloaded the .spk file.
+4. Select the .spk file and click Next.
 
 ### Synology Drive and Btrfs Snapshots
 
@@ -302,49 +193,39 @@ But, removing the ext4 volume will result in the **irreversible loss of all file
 
 On the positive side, by moving the database to the Btrfs volume, you'll free up the space previously occupied by the versioning data on the ext4 volume.
 
-For more details, check out this [GitHub discussion](https://github.com/007revad/Synology_app_mover/discussions/200).
+For more details, see this [GitHub discussion](https://github.com/007revad/Synology_app_mover/discussions/200).
 
-### Video - moving Container Manager
+### Screenshots
 
-<!-- https://github.com/007revad/Synology_app_mover/assets/39733752/8373dc38-2271-45bd-93f5-357669b7ec40 -->
-<!-- https://github.com/user-attachments/assets/e308839a-1a3d-402b-9920-dc98901c1234 -->
-https://github.com/007revad/Synology_app_mover/assets/e308839a-1a3d-402b-9920-dc98901c1234
-
-### DSM 7 screenshots
-
-<p align="center">Moving a package (with dependencies)</p>
-<p align="center"><img src="/images/app2.png"></p>
+<!--- <p align="center">Description of image 1 goes here</p> --->
+<p align="center"><kbd><img src="/images/installed.png"></kbd></p>
 
 <br>
 
-<p align="center">Moving packages with shared folders</p>
-<p align="center"><img src="/images/app3.png"></p>
-<p align="center"><img src="/images/app4.png"></p>
+<p align="center">Settings window</p>
+<p align="center"><kbd><img src="/images/settings.png"></kbd></p>
 
 <br>
 
 <p align="center">Moving a package that has a volume location setting</p>
-<p align="center"><img src="/images/app5.png"></p>
+<p align="center"><kbd><img src="/images/installed.png"></kbd></p>
 
 <br>
 
 <p align="center">Moving Active Backup for Business</p>
-<p align="center"><img src="/images/app6.png"></p>
+<p align="center"><kbd><img src="/images/move_abb.png"></kbd></p>
 
 <br>
 
 <p align="center">Backing up Audio Station</p>
-<p align="center"><img src="/images/backup.png"></p>
+<p align="center"><kbd><img src="/images/backup_audiostation.png"></kbd></p>
 
 <br>
 
-<p align="center">Backing up with the --auto option</p>
-<p align="center"><img src="/images/auto_option.png"></p>
+<p align="center">Backing up all packages</p>
+<p align="center"><kbd><img src="/images/backup_all.png"></kbd></p>
 
 <br>
-
-<p align="center">Output with --list option</p>
-<p align="center"><img src="/images/list_option.png"></p>
 
 ### Credits
 - wallacebrf for extensive beta testing of syno_app_mover v3.
