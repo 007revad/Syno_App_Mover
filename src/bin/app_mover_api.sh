@@ -14,6 +14,7 @@
 #   app_mover_api.sh jobresults
 #   app_mover_api.sh getsettings
 #   app_mover_api.sh listbackups
+#   app_mover_api.sh databaseinfo <volume>
 #   app_mover_api.sh setsettings <backuppath> <buffer GB> <skip minutes>
 #   app_mover_api.sh selfheal
 #   app_mover_api.sh removeschedule
@@ -531,6 +532,14 @@ case "$ACTION" in
         ;;
     getsettings)
         do_getsettings
+        ;;
+    databaseinfo)
+        # Has to run as root: @database/pgsql belongs to the database user,
+        # so the package user can't read it to get its size. The list script
+        # checks that the argument is a volume like /volume2.
+        [[ $# -eq 1 ]] || fail "databaseinfo needs a volume"
+        out="$(bash "$LIST_SCRIPT" databaseinfo "$1" 2>&1)" || fail "$out"
+        printf '%s\n' "$out"
         ;;
     listbackups)
         # Has to run as root: the package user can't see into the backup

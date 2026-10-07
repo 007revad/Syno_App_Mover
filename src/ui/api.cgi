@@ -238,7 +238,8 @@ listbackups)
     ;;
 
 databaseinfo)
-    run_list databaseinfo "${PARAM[dest]}"
+    # Needs root: the package user can't read @database/pgsql to size it
+    run_privileged databaseinfo "${PARAM[dest]}"
     if [ "$RUN_RC" -ne 0 ]; then
         log "[ERROR] databaseinfo ${PARAM[dest]} failed (rc=${RUN_RC}): ${RUN_OUT}"
         json_response false "${RUN_OUT:-Could not check @database}" ""

@@ -45,7 +45,7 @@ static int in_list(const char *cmd, const char *list[])
 int main(int argc, char *argv[])
 {
     const char *no_arg[] = { "jobresults", "getsettings", "listbackups", "selfheal", "removeschedule", NULL };
-    const char *one_arg[] = { "jobstatus", NULL };
+    const char *one_arg[] = { "jobstatus", "databaseinfo", NULL };
     const char *three_arg[] = { "startjob", "setsettings", NULL };
 
     if (argc < 2) {
