@@ -10,6 +10,8 @@
 
 Easily move Synology packages from one volume to another volume, or backup and restore them.
 
+  - When restoring a package that package must already be installed.
+
 Handy for moving packages to an SSD volume, or to another volume so you can delete the original volume.
 
   - Supports DSM 7. Not fully tested with DSM 6.
