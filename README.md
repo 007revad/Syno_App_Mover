@@ -204,26 +204,46 @@ For more details, see this [GitHub discussion](https://github.com/007revad/Synol
 
 <br>
 
-<p align="center">Settings window</p>
+<p align="center">Settings</p>
 <p align="center"><kbd><img src="/images/settings.png"></kbd></p>
 
 <br>
 
-<p align="center">Moving Active Backup for Business</p>
-<p align="center"><kbd><img src="/images/move_abb.png"></kbd></p>
+<p align="center">Move select source volume</p>
+<p align="center"><kbd><img src="/images/move_source_volume.png"></kbd></p>
 
 <br>
 
-<p align="center">Backing up Audio Station</p>
-<p align="center"><kbd><img src="/images/backup_audiostation.png"></kbd></p>
+<p align="center">Move select target volume</p>
+<p align="center"><kbd><img src="/images/move_target_volume.png"></kbd></p>
 
 <br>
 
-<p align="center">Backing up all packages</p>
-<p align="center"><kbd><img src="/images/backup_all.png"></kbd></p>
+<p align="center">Move apps</p>
+<p align="center"><kbd><img src="/images/move.png"></kbd></p>
+
+<br>
+
+<p align="center">Backup schedule settings</p>
+<p align="center"><kbd><img src="/images/backup_schedule.png"></kbd></p>
+
+<br>
+
+<p align="center">Backup selected apps</p>
+<p align="center"><kbd><img src="/images/backup_start.png"></kbd></p>
+
+<br>
+
+<p align="center">Backup finished</p>
+<p align="center"><kbd><img src="/images/backup_finished.png"></kbd></p>
+
+<br>
+
+<p align="center">Restore apps</p>
+<p align="center"><kbd><img src="/images/restore.png"></kbd></p>
 
 <br>
 
 ### Credits
-- wallacebrf for extensive beta testing of syno_app_mover v3.
+- wallacebrf for extensive beta testing of syno_app_mover script v3.
 - ctrlaltdelete for the code to export Container Manager/Docker container's settings.
