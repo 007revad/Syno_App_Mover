@@ -1,6 +1,6 @@
 # <img src="images/icon.png" width="54"> Syno App Mover package
 
-<a href="https://github.com/007revad/Synology_app_mover/releases"><img src="https://img.shields.io/github/release/007revad/Syno_App_Mover.svg"></a>
+<a href="https://github.com/007revad/Syno_App_Mover/releases"><img src="https://img.shields.io/github/release/007revad/Syno_App_Mover.svg"></a>
 ![Badge](https://hitscounter.dev/api/hit?url=https%3A%2F%2Fgithub.com%2F007revad%2FSyno_App_Mover&label=Visitors&icon=github&color=%23198754&message=&style=flat&tz=Australia%2FSydney)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/paypalme/007revad)
 [![](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/007revad)
@@ -206,11 +206,6 @@ For more details, see this [GitHub discussion](https://github.com/007revad/Synol
 
 <p align="center">Settings window</p>
 <p align="center"><kbd><img src="/images/settings.png"></kbd></p>
-
-<br>
-
-<p align="center">Moving a package that has a volume location setting</p>
-<p align="center"><kbd><img src="/images/installed.png"></kbd></p>
 
 <br>
 
