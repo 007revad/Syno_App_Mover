@@ -19,6 +19,10 @@
 #   jobresults                        the text for the results window
 #   getsettings
 #   setsettings backuppath buffer skip_minutes     POST
+#   getschedule                       the scheduled backup, if there is one
+#   setschedule type interval apps    POST. type is hour, week or month
+#   removeschedule                    POST
+#   listfolders [path]                the folder picker (as root)
 #----------------------------------------------------------
 
 # --------- 1. Common variables and path calculations -------------
@@ -296,6 +300,51 @@ setsettings)
     if [ "$RUN_RC" -ne 0 ]; then
         log "[ERROR] setsettings failed (rc=${RUN_RC}): ${RUN_OUT}"
         json_response false "${RUN_OUT:-Failed to save the settings}" ""
+    else
+        json_response true "" "${RUN_OUT}"
+    fi
+    ;;
+
+getschedule)
+    run_privileged getschedule
+    if [ "$RUN_RC" -ne 0 ]; then
+        log "[ERROR] getschedule failed (rc=${RUN_RC}): ${RUN_OUT}"
+        json_response false "${RUN_OUT:-Could not read the schedule}" ""
+    else
+        json_response true "" "${RUN_OUT}"
+    fi
+    ;;
+
+setschedule)
+    require_post
+    # app_mover_api.sh checks every value, and makes the Task Scheduler task
+    run_privileged setschedule "${PARAM[type]}" "${PARAM[interval]:-0}" "${PARAM[apps]}"
+    if [ "$RUN_RC" -ne 0 ]; then
+        log "[ERROR] setschedule ${PARAM[type]} failed (rc=${RUN_RC}): ${RUN_OUT}"
+        json_response false "${RUN_OUT:-Failed to save the schedule}" ""
+    else
+        json_response true "" "${RUN_OUT}"
+    fi
+    ;;
+
+removeschedule)
+    require_post
+    run_privileged removeschedule
+    if [ "$RUN_RC" -ne 0 ]; then
+        log "[ERROR] removeschedule failed (rc=${RUN_RC}): ${RUN_OUT}"
+        json_response false "${RUN_OUT:-Failed to remove the schedule}" ""
+    else
+        json_response true "" "${RUN_OUT}"
+    fi
+    ;;
+
+listfolders)
+    # The folder picker. Needs root: the package user can't see into shared
+    # folders. app_mover_api.sh only lists plain folders under a volume.
+    run_privileged listfolders "${PARAM[path]}"
+    if [ "$RUN_RC" -ne 0 ]; then
+        log "[ERROR] listfolders ${PARAM[path]} failed (rc=${RUN_RC}): ${RUN_OUT}"
+        json_response false "${RUN_OUT:-Could not list the folders}" ""
     else
         json_response true "" "${RUN_OUT}"
     fi

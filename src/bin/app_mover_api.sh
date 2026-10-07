@@ -13,11 +13,19 @@
 #   app_mover_api.sh jobstatus <job id>:<offset>      (job id 0 = current job)
 #   app_mover_api.sh jobresults
 #   app_mover_api.sh getsettings
+#   app_mover_api.sh getschedule
+#   app_mover_api.sh setschedule <hour|week|month> <hours 1-11, or 0> <apps>
+#   app_mover_api.sh listfolders <folder, or nothing for the volumes>
 #   app_mover_api.sh listbackups
 #   app_mover_api.sh databaseinfo <volume>
 #   app_mover_api.sh setsettings <backuppath> <buffer GB> <skip minutes>
 #   app_mover_api.sh selfheal
 #   app_mover_api.sh removeschedule
+#
+# A scheduled backup is Task Scheduler running
+#   app_mover_api.sh scheduledbackup
+# (not a verb the helper accepts) which backs up the apps chosen when the
+# schedule was saved. It is a job like any other, so the window shows it.
 #
 # A job is syno_app_mover.sh run detached, as root, with its output written
 # to a log. The UI polls jobstatus for new lines until the job has finished,
@@ -257,7 +265,27 @@ job_running(){
     [[ $pid =~ ^[0-9]+$ ]] || return 1
     kill -0 "$pid" 2>/dev/null || return 1
     # Make sure the pid is still our job and not something that reused it
-    tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null | grep -q '_runjob'
+    tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null | grep -q -E '_runjob|scheduledbackup'
+}
+
+take_start_lock(){ 
+    # Only one start at a time. Ignores a lock left behind by a crash.
+    mkdir "$START_LOCK" 2>/dev/null && return 0
+    if [[ -n "$(find "$START_LOCK" -maxdepth 0 -mmin +1 2>/dev/null)" ]]; then
+        rmdir "$START_LOCK" 2>/dev/null
+        mkdir "$START_LOCK" 2>/dev/null && return 0
+    fi
+    return 1
+}
+
+new_job(){ 
+    # Starts the files of a new job and sets JOB_NEW_ID. The caller holds the
+    # start lock and has checked that no job is running.
+    find "$LOG_DIR" -maxdepth 1 -name 'syno_app_mover_*.log' -mtime +"$LOG_KEEP_DAYS" -delete 2>/dev/null
+    JOB_NEW_ID="$(date +%s)$(printf '%04d' $((RANDOM % 10000)))"
+    rm -f "$JOB_PID_FILE" "$JOB_RC_FILE" "$JOB_ID_FILE"
+    : > "$JOB_LOG"
+    echo "$JOB_NEW_ID" > "$JOB_ID_FILE"
 }
 
 job_id(){ 
@@ -272,28 +300,15 @@ do_startjob(){
     msg="$(validate_job "$mode" "$dest" "$apps")" || fail "$msg"
 
     # Only one start at a time, and only one job at a time
-    mkdir "$START_LOCK" 2>/dev/null || {
-        # Ignore a lock left behind by a crash
-        if [[ -n "$(find "$START_LOCK" -maxdepth 0 -mmin +1 2>/dev/null)" ]]; then
-            rmdir "$START_LOCK" 2>/dev/null
-            mkdir "$START_LOCK" 2>/dev/null || fail "Another job is starting"
-        else
-            fail "Another job is starting"
-        fi
-    }
+    take_start_lock || fail "Another job is starting"
     trap 'rmdir "$START_LOCK" 2>/dev/null' EXIT
 
     if job_running; then
         fail "A job is already running"
     fi
 
-    # Remove logs from the script older than LOG_KEEP_DAYS
-    find "$LOG_DIR" -maxdepth 1 -name 'syno_app_mover_*.log' -mtime +"$LOG_KEEP_DAYS" -delete 2>/dev/null
-
-    id="$(date +%s)$(printf '%04d' $((RANDOM % 10000)))"
-    rm -f "$JOB_PID_FILE" "$JOB_RC_FILE" "$JOB_ID_FILE"
-    : > "$JOB_LOG"
-    echo "$id" > "$JOB_ID_FILE"
+    new_job
+    id="$JOB_NEW_ID"
     api_log "job $id: $mode ${dest} ${apps}"
 
     # Detached: carries on if the browser is closed
@@ -439,14 +454,17 @@ print(json.dumps({
 # Settings
 
 do_getsettings(){ 
-    local backuppath buffer skip
+    local backuppath buffer skip exists
     backuppath="$(/usr/syno/bin/synogetkeyvalue "$CONF_FILE" backuppath)"
     buffer="$(/usr/syno/bin/synogetkeyvalue "$CONF_FILE" buffer)"
     skip="$(/usr/syno/bin/synogetkeyvalue "$CONF_FILE" skip_minutes)"
     [[ $buffer =~ ^[0-9]+$ ]] || buffer=50
     [[ $skip =~ ^[0-9]+$ ]] || skip=360
-    printf '{"backuppath":%s,"buffer":%s,"skip_minutes":%s}\n' \
-        "$(json_str "$backuppath")" "$buffer" "$skip"
+    # Is the backup folder still there? (It can be renamed or deleted in File Station.)
+    exists="false"
+    [[ -n $backuppath && -d $backuppath ]] && exists="true"
+    printf '{"backuppath":%s,"backuppath_exists":%s,"buffer":%s,"skip_minutes":%s}\n' \
+        "$(json_str "$backuppath")" "$exists" "$buffer" "$skip"
 }
 
 json_str(){ 
@@ -492,17 +510,204 @@ do_setsettings(){
     echo '{"saved":true}'
 }
 
-do_removeschedule(){ 
-    # Called by preuninst so uninstalling leaves no orphaned task.
-    # Nothing to do if there never was a scheduled backup.
-    local out
-    [[ -x $TASK_SETUP ]] || { echo '{"removed":false}'; return 0; }
-    out="$("$TASK_SETUP" remove --name="$TASK_NAME" 2>>"$API_LOG_FILE")"
-    echo "$out" >> "$API_LOG_FILE"
-    if echo "$out" | grep -q '"success":false'; then
-        fail "$out"
+conf_get(){ 
+    /usr/syno/bin/synogetkeyvalue "$CONF_FILE" "$1"
+}
+
+conf_set(){ 
+    /usr/syno/bin/synosetkeyvalue "$CONF_FILE" "$1" "$2"
+    chown "root:${PKG_NAME}" "$CONF_FILE" 2>/dev/null
+    chmod 644 "$CONF_FILE" 2>/dev/null
+}
+
+task_failed(){ 
+    # $1 is task_setup.sh's output and $2 its exit code
+    [[ $2 -ne 0 ]] || printf '%s' "$1" | grep -q -E '"success" *: *false'
+}
+
+task_message(){ 
+    # The "message" in task_setup.sh's JSON, or what it printed
+    printf '%s' "$1" | python3 -c '
+import json, sys
+t = sys.stdin.read().strip()
+try:
+    m = json.loads(t).get("message")
+except Exception:
+    m = None
+print(m or t[:200] or "Could not set up the scheduled task")
+' 2>/dev/null
+}
+
+do_getschedule(){ 
+    local type interval apps app out exists="false" first="yes" json_apps=""
+    local -a list
+    type="$(conf_get schedule_type)"
+    interval="$(conf_get schedule_interval)"
+    apps="$(conf_get schedule_apps)"
+    [[ $type =~ ^(hour|week|month)$ ]] || { type=""; apps=""; }
+    [[ $interval =~ ^[0-9]+$ ]] || interval=0
+
+    # The user can delete the task in Task Scheduler, so ask it too
+    if [[ -n $type && -x $TASK_SETUP ]]; then
+        out="$("$TASK_SETUP" find --name="$TASK_NAME" 2>>"$API_LOG_FILE")"
+        if printf '%s' "$out" | grep -q -E '"exists" *: *true'; then
+            exists="true"
+        fi
     fi
+
+    IFS=',' read -r -a list <<< "$apps"
+    for app in "${list[@]}"; do
+        [[ $app =~ ^[A-Za-z0-9._+-]+$ ]] || continue
+        [[ $first == "yes" ]] || json_apps+=","
+        first="no"
+        json_apps+="$(json_str "$app")"
+    done
+    printf '{"type":%s,"interval":%s,"apps":[%s],"task_exists":%s}\n' \
+        "$(json_str "$type")" "$interval" "$json_apps" "$exists"
+}
+
+do_setschedule(){ 
+    # $1 hour, week or month. $2 hours (1 to 11) for hour, 0 for the others.
+    # $3 comma separated apps (the ones ticked when the schedule is saved)
+    local type="$1" interval="$2" apps="$3" msg out rc
+    local -a args
+
+    case "$type" in
+        hour|week|month) ;;
+        *) fail "Invalid schedule '$type'" ;;
+    esac
+    if [[ $type == "hour" ]]; then
+        [[ $interval =~ ^([1-9]|1[01])$ ]] || fail "The hours must be 1 to 11"
+    else
+        interval=0
+    fi
+    [[ $apps != "all" ]] || fail "Select the apps to back up"
+
+    # The same checks as a backup that is started now. That includes that the
+    # backup location is set and exists.
+    msg="$(validate_job backup - "$apps")" || fail "$msg"
+
+    [[ -x $TASK_SETUP ]] || fail "task_setup.sh is missing"
+    args=(set --name="$TASK_NAME" --command="bash ${SELF} scheduledbackup" --interval-type="$type")
+    [[ $type == "hour" ]] && args+=(--interval="$interval")
+    out="$("$TASK_SETUP" "${args[@]}" 2>>"$API_LOG_FILE")"
+    rc=$?
+    echo "$out" >> "$API_LOG_FILE"
+    if task_failed "$out" "$rc"; then
+        fail "$(task_message "$out")"
+    fi
+    # Make sure it is really there
+    out="$("$TASK_SETUP" find --name="$TASK_NAME" 2>>"$API_LOG_FILE")"
+    printf '%s' "$out" | grep -q -E '"exists" *: *true' || fail "The scheduled task was not created"
+
+    conf_set schedule_type "$type"
+    conf_set schedule_interval "$interval"
+    conf_set schedule_apps "$apps"
+    api_log "schedule saved: $type $interval $apps"
+    echo '{"saved":true}'
+}
+
+do_scheduledbackup(){ 
+    # Run by Task Scheduler (as root) with the command do_setschedule saved
+    # in the task. Backs up the apps chosen when the schedule was saved.
+    # Its output is what Task Scheduler shows. It is a job like any other, so
+    # the window shows it running.
+    local apps app id rc msg
+    local -a list keep=()
+
+    apps="$(conf_get schedule_apps)"
+    [[ -n $apps ]] || fail "There is no scheduled backup set up"
+    IFS=',' read -r -a list <<< "$apps"
+    for app in "${list[@]}"; do
+        if [[ $app =~ ^[A-Za-z0-9._+-]+$ ]] && [[ -f "/var/packages/${app}/INFO" ]]; then
+            keep+=("$app")
+        else
+            echo "Skipping $app: it is not installed"
+        fi
+    done
+    [[ ${#keep[@]} -gt 0 ]] || fail "None of the apps in the scheduled backup are installed"
+    apps="$(IFS=','; echo "${keep[*]}")"
+    msg="$(validate_job backup - "$apps")" || fail "$msg"
+
+    take_start_lock || fail "Another job is starting"
+    trap 'rmdir "$START_LOCK" 2>/dev/null' EXIT
+    if job_running; then
+        fail "A job is already running. This scheduled backup was skipped."
+    fi
+    new_job
+    id="$JOB_NEW_ID"
+    echo "$$" > "$JOB_PID_FILE"
+    rmdir "$START_LOCK" 2>/dev/null
+    api_log "job $id: scheduled backup ${apps}"
+
+    build_args backup - "$apps"
+    APP_MOVER_RESULTS_MARKER=yes "$MOVER" "${MOVER_ARGS[@]}" 2>&1 | tee -a "$JOB_LOG" | grep -v -x -F "$RESULTS_MARKER"
+    rc="${PIPESTATUS[0]}"
+    echo "$rc" > "${JOB_RC_FILE}.tmp" && mv -f "${JOB_RC_FILE}.tmp" "$JOB_RC_FILE"
+    exit "$rc"
+}
+
+do_removeschedule(){ 
+    # Called by preuninst so uninstalling leaves no orphaned task, and by the
+    # Schedule window's Remove button. Nothing to do if there never was one.
+    local out rc
+    if [[ -x $TASK_SETUP ]]; then
+        out="$("$TASK_SETUP" remove --name="$TASK_NAME" 2>>"$API_LOG_FILE")"
+        rc=$?
+        echo "$out" >> "$API_LOG_FILE"
+        if task_failed "$out" "$rc"; then
+            fail "$(task_message "$out")"
+        fi
+    fi
+    conf_set schedule_type ""
+    conf_set schedule_interval ""
+    conf_set schedule_apps ""
     echo '{"removed":true}'
+}
+
+do_listfolders(){ 
+    # The folder picker. $1 is a folder like /volume1/Backups, or nothing for
+    # the volumes. Prints [{"name":..,"path":..}] for the folders in it.
+    # Only plain folders with names the backup location allows: not links,
+    # not DSM's own (@appstore, #recycle, ...), nothing hidden.
+    local p="${1%/}" d name seg v first="yes" count=0 out=""
+    local -a segs
+
+    if [[ -z $p ]]; then
+        for v in /volume*; do
+            valid_volume "$v" || continue
+            [[ $first == "yes" ]] || out+=","
+            first="no"
+            out+="{\"name\":$(json_str "${v#/}"),\"path\":$(json_str "$v")}"
+        done
+    else
+        [[ $p =~ ^/volume[1-9][0-9]?(/[A-Za-z0-9._+-]+)*$ ]] || fail "Invalid folder"
+        IFS='/' read -r -a segs <<< "${p#/}"
+        for seg in "${segs[@]}"; do
+            [[ $seg != "." && $seg != ".." ]] || fail "Invalid folder"
+        done
+        valid_volume "/${segs[0]}" || fail "Invalid folder"
+        [[ -d $p ]] || fail "$p not found"
+        # No links on the way (they could lead anywhere)
+        [[ "$(readlink -f "$p")" == "$p" ]] || fail "Invalid folder"
+
+        for d in "$p"/*/; do
+            [[ -d $d ]] || continue
+            name="${d%/}"
+            [[ -L $name ]] && continue
+            name="${name##*/}"
+            [[ $name =~ ^[A-Za-z0-9._+-]+$ ]] || continue
+            case "$name" in
+                .*|@*|"#"*|lost+found) continue ;;
+            esac
+            [[ $first == "yes" ]] || out+=","
+            first="no"
+            out+="{\"name\":$(json_str "$name"),\"path\":$(json_str "${p}/${name}")}"
+            count=$((count + 1))
+            [[ $count -lt 1000 ]] || break
+        done
+    fi
+    printf '[%s]\n' "$out"
 }
 
 #------------------------------------------------------------------------------
@@ -552,6 +757,23 @@ case "$ACTION" in
     setsettings)
         [[ $# -eq 3 ]] || fail "setsettings needs 3 values"
         do_setsettings "$1" "$2" "$3"
+        ;;
+    getschedule)
+        [[ $# -eq 0 ]] || fail "getschedule takes no arguments"
+        do_getschedule
+        ;;
+    setschedule)
+        [[ $# -eq 3 ]] || fail "setschedule needs a schedule, the hours and the apps"
+        do_setschedule "$1" "$2" "$3"
+        ;;
+    scheduledbackup)
+        # Only ever run by Task Scheduler (appmover-helper doesn't accept it)
+        [[ $# -eq 0 ]] || exit 1
+        do_scheduledbackup
+        ;;
+    listfolders)
+        [[ $# -eq 1 ]] || fail "listfolders needs a folder"
+        do_listfolders "$1"
         ;;
     selfheal)
         echo '{"selfheal":true}'

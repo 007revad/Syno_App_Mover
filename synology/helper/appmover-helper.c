@@ -44,9 +44,9 @@ static int in_list(const char *cmd, const char *list[])
 
 int main(int argc, char *argv[])
 {
-    const char *no_arg[] = { "jobresults", "getsettings", "listbackups", "selfheal", "removeschedule", NULL };
-    const char *one_arg[] = { "jobstatus", "databaseinfo", NULL };
-    const char *three_arg[] = { "startjob", "setsettings", NULL };
+    const char *no_arg[] = { "jobresults", "getsettings", "getschedule", "listbackups", "selfheal", "removeschedule", NULL };
+    const char *one_arg[] = { "jobstatus", "databaseinfo", "listfolders", NULL };
+    const char *three_arg[] = { "startjob", "setsettings", "setschedule", NULL };
 
     if (argc < 2) {
         fprintf(stderr, "appmover-helper: missing subcommand\n");

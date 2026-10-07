@@ -1,2 +1,8 @@
+v1.0.1
+- Second beta release.
+- Added Browse button in settings to select backup target.
+- Added Schedule button to schedule backups.
+- UI improvements.
+
 v1.0.0
 - First beta release.

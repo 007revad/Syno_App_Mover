@@ -16,6 +16,15 @@ log_message() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "${VAR_DIR}/install.log" 2>/dev/null || true
 }
 
+# DSM runs preuninst when it upgrades the package as well (with
+# SYNOPKG_PKG_STATUS=UPGRADE). The scheduled backup has to survive that, or
+# every upgrade would silently delete the user's schedule. The task runs
+# app_mover_api.sh by its full path, which is the same after an upgrade.
+if [[ "$SYNOPKG_PKG_STATUS" == "UPGRADE" ]]; then
+    log_message "preuninst: upgrading - scheduled task left in place"
+    exit 0
+fi
+
 # Remove the scheduled task so uninstalling doesn't leave an orphaned
 # task pointing at a script that no longer exists (which would fail
 # silently, or email the user, on its next scheduled run).

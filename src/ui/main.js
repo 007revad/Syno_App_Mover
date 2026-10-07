@@ -59,10 +59,12 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         this.pollMs = 1000;         // how often to ask for new output
         this.mode = "move";
         this.volumes = [];
-        this.settings = { backuppath: "", buffer: 50, skip_minutes: 360 };
+        this.settings = { backuppath: "", backuppath_exists: false, buffer: 50, skip_minutes: 360 };
+        this.schedule = { type: "", interval: 0, apps: [], task_exists: false };
+        this.backupItems = [];
         this.job = null;
         this.polling = false;
-        this.req = { move: 0, backup: 0, restore: 0 };   // newest request of each panel
+        this.req = { move: 0, backup: 0, restore: 0, picker: 0 };   // newest request of each list
         SYNO.SDS.App_Mover.MainWindow.superclass.constructor.call(this, Ext.apply({
             layout: "fit",
             resizable: true,
@@ -72,6 +74,8 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             showHelp: false,
             width: 760,
             height: 580,
+            minWidth: 760,
+            minHeight: 580,
             html: this.buildHtml(),
             listeners: {
                 afterrender: {
@@ -104,14 +108,27 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             '  .am-row label { color:#555; }',
             '  .am-row select { min-width:200px; padding:3px; }',
             '  .am-list { flex:1 1 auto; overflow:auto; border:1px solid #ccc; border-radius:4px; padding:4px 8px; background:#fff; min-height:80px; }',
-            '  .am-item { display:flex; align-items:baseline; gap:6px; padding:4px 2px; border-bottom:1px solid #f0f0f0; }',
+            '  .am-item { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 8px; padding:4px 2px; border-bottom:1px solid #f0f0f0; }',
+            '  .am-item label { flex:0 0 auto; white-space:nowrap; }',
             '  .am-item.am-all { border-bottom:1px solid #ccc; font-weight:bold; }',
             '  .am-item.am-disabled { color:#999; }',
-            '  .am-item .am-note { color:#888; font-size:12px; }',
-            '  .am-item .am-warn { color:#b36b00; font-size:12px; }',
+            '  .am-item .am-note { flex:1 1 auto; color:#888; font-size:12px; }',
+            '  .am-item .am-warn { flex:1 1 auto; color:#b36b00; font-size:12px; }',
             '  .am-empty { color:#888; padding:10px 2px; }',
-            '  .am-notes { flex:0 0 auto; min-height:18px; color:#555; padding-top:6px; font-size:12px; }',
+            '  .am-notes { flex:0 0 auto; min-height:18px; color:#555; padding-top:6px; font-size:12px; white-space:pre-line; }',
+            '  .am-notes.am-bad { color:#c00; }',
             '  .am-actions { flex:0 0 auto; text-align:right; padding-top:8px; }',
+            '  .am-actions button { margin-left:8px; }',
+            '  .am-pathrow { display:flex; gap:6px; }',
+            '  .am-pathrow input { flex:1 1 auto; width:auto; }',
+            '  .am-field select { padding:3px; }',
+            '  .am-sch-apps { padding:6px; background:#f6f6f6; border:1px solid #ddd; border-radius:4px; max-height:90px; overflow:auto; }',
+            '  .am-sch-remove { float:left; margin-left:0 !important; }',
+            '  .am-pk-path { font-weight:bold; color:#444; padding-bottom:6px; word-break:break-all; }',
+            '  .am-pk-list { height:260px; overflow:auto; border:1px solid #ccc; border-radius:4px; background:#fff; }',
+            '  .am-pk-row { padding:5px 8px; cursor:pointer; border-bottom:1px solid #f0f0f0; }',
+            '  .am-pk-row:hover { background:#eaf3fd; }',
+            '  .am-pk-up { color:#555; }',
             '  .am-progress { flex:1 1 auto; display:none; flex-direction:column; min-height:0; }',
             '  .am-progress.active { display:flex; }',
             '  .am-progress-head { flex:0 0 auto; display:flex; align-items:center; gap:10px; padding-bottom:8px; font-size:14px; font-weight:bold; color:#444; }',
@@ -156,7 +173,10 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             '  <div class="am-panel am-panel-backup">',
             '    <div class="am-list am-list-backup"></div>',
             '    <div class="am-notes am-notes-backup"></div>',
-            '    <div class="am-actions"><button type="button" class="am-primary am-go-backup" disabled>Back up</button></div>',
+            '    <div class="am-actions">',
+            '      <button type="button" class="am-schedule" disabled>Schedule\u2026</button>',
+            '      <button type="button" class="am-primary am-go-backup" disabled>Back up</button>',
+            '    </div>',
             '  </div>',
             '  <div class="am-panel am-panel-restore">',
             '    <div class="am-list am-list-restore"></div>',
@@ -190,7 +210,10 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             '      <h3>Settings</h3>',
             '      <div class="am-field">',
             '        <label>Backup location</label>',
-            '        <input type="text" class="am-set-path" placeholder="/volume1/backups">',
+            '        <div class="am-pathrow">',
+            '          <input type="text" class="am-set-path" placeholder="/volume1/backups">',
+            '          <button type="button" class="am-browse">Browse\u2026</button>',
+            '        </div>',
             '        <div class="am-hint">An existing folder, like /volume1/backups. Letters, numbers and . _ + - only.</div>',
             '      </div>',
             '      <div class="am-field">',
@@ -208,8 +231,59 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             '      </div>',
             '    </div>',
             '  </div>',
+            '  <div class="am-modal-backdrop am-schedule-backdrop">',
+            '    <div class="am-modal">',
+            '      <button type="button" class="am-modal-close am-sch-x" aria-label="Close">\u00d7</button>',
+            '      <h3>Schedule backup</h3>',
+            '      <div class="am-field">',
+            '        <label>Apps to back up (the ones ticked in the list)</label>',
+            '        <div class="am-sch-apps"></div>',
+            '      </div>',
+            '      <div class="am-field">',
+            '        <label>How often</label>',
+            '        <div class="am-pathrow">',
+            '          <select class="am-sch-type">',
+            '            <option value="week">Every week</option>',
+            '            <option value="month">Every month</option>',
+            '            <option value="hour">Every few hours</option>',
+            '          </select>',
+            '          <select class="am-sch-interval">' + this.hourOptions() + '</select>',
+            '        </div>',
+            '        <div class="am-hint am-sch-hint"></div>',
+            '      </div>',
+            '      <div class="am-field am-sch-current"></div>',
+            '      <div class="am-settings-status am-sch-status"></div>',
+            '      <div class="am-modal-buttons">',
+            '        <button type="button" class="am-sch-remove">Remove schedule</button>',
+            '        <button type="button" class="am-sch-cancel">Cancel</button>',
+            '        <button type="button" class="am-primary am-sch-save">Save schedule</button>',
+            '      </div>',
+            '    </div>',
+            '  </div>',
+            '  <div class="am-modal-backdrop am-picker-backdrop">',
+            '    <div class="am-modal">',
+            '      <button type="button" class="am-modal-close am-pk-x" aria-label="Close">\u00d7</button>',
+            '      <h3>Choose the backup folder</h3>',
+            '      <div class="am-pk-path"></div>',
+            '      <div class="am-pk-list"></div>',
+            '      <div class="am-settings-status am-pk-status"></div>',
+            '      <div class="am-modal-buttons">',
+            '        <button type="button" class="am-pk-cancel">Cancel</button>',
+            '        <button type="button" class="am-primary am-pk-select" disabled>Select this folder</button>',
+            '      </div>',
+            '    </div>',
+            '  </div>',
             '</div>'
         ].join("");
+    },
+
+    hourOptions: function() {
+        var out = "", i;
+        for (i = 1; i <= 11; i++) {
+            out += '<option value="' + i + '"' + (i === 6 ? " selected" : "") + ">" +
+                (i === 1 ? "Every hour" : "Every " + i + " hours") + "</option>";
+        }
+        return out;
     },
 
     // ---------------------------------------------------------------
@@ -228,7 +302,13 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             confirmBackdrop: q(".am-confirm-backdrop"), confirmTitle: q(".am-confirm-title"), confirmBody: q(".am-confirm-body"),
             resultsBackdrop: q(".am-results-backdrop"), resultsTitle: q(".am-results-title"), resultsText: q(".am-results-text"),
             settingsBackdrop: q(".am-settings-backdrop"), setPath: q(".am-set-path"), setBuffer: q(".am-set-buffer"),
-            setSkip: q(".am-set-skip"), settingsStatus: q(".am-settings-status")
+            setSkip: q(".am-set-skip"), settingsStatus: q(".am-settings-status"),
+            goSchedule: q(".am-schedule"),
+            scheduleBackdrop: q(".am-schedule-backdrop"), schApps: q(".am-sch-apps"), schType: q(".am-sch-type"),
+            schInterval: q(".am-sch-interval"), schHint: q(".am-sch-hint"), schCurrent: q(".am-sch-current"),
+            schStatus: q(".am-sch-status"), schSave: q(".am-sch-save"), schRemove: q(".am-sch-remove"),
+            pickerBackdrop: q(".am-picker-backdrop"), pickerPath: q(".am-pk-path"), pickerList: q(".am-pk-list"),
+            pickerStatus: q(".am-pk-status"), pickerSelect: q(".am-pk-select")
         };
         this.panels = {
             move: q(".am-panel-move"), backup: q(".am-panel-backup"), restore: q(".am-panel-restore")
@@ -251,6 +331,16 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         Ext.fly(q(".am-settings-x")).on("click", this.closeSettings, this);
         Ext.fly(q(".am-settings-cancel")).on("click", this.closeSettings, this);
         Ext.fly(q(".am-settings-save")).on("click", this.onSaveSettings, this);
+        Ext.fly(q(".am-browse")).on("click", this.openPicker, this);
+        Ext.fly(q(".am-pk-x")).on("click", this.closePicker, this);
+        Ext.fly(q(".am-pk-cancel")).on("click", this.closePicker, this);
+        Ext.fly(this.el$.pickerSelect).on("click", this.onPickerSelect, this);
+        Ext.fly(this.el$.goSchedule).on("click", this.openSchedule, this);
+        Ext.fly(q(".am-sch-x")).on("click", this.closeSchedule, this);
+        Ext.fly(q(".am-sch-cancel")).on("click", this.closeSchedule, this);
+        Ext.fly(this.el$.schType).on("change", this.onScheduleTypeChange, this);
+        Ext.fly(this.el$.schSave).on("click", this.onSaveSchedule, this);
+        Ext.fly(this.el$.schRemove).on("click", this.onRemoveSchedule, this);
 
         // DSM's desktop suppresses the native right-click menu; stopping
         // propagation lets Copy work over our own content (see CPUTemp).
@@ -271,6 +361,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             }
             this.setMessage("", false);
             this.loadSettings();
+            this.loadSchedule();
             if (resp.result && resp.result.running) {
                 this.beginProgress(resp.result.job_id, "A job is running");
                 return;
@@ -337,7 +428,12 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         }, this);
         this.setMessage("", false);
         if (mode === "move") { this.loadVolumes(); }
-        if (mode === "backup") { this.loadBackupPackages(); }
+        if (mode === "backup") {
+            // Settings can have changed (or the folder renamed in File Station)
+            this.loadSettings();
+            this.loadSchedule();
+            this.loadBackupPackages();
+        }
         if (mode === "restore") { this.loadBackups(); }
     },
 
@@ -383,6 +479,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         }
         sel.innerHTML = html;
         if (found) { sel.value = current; }
+        this.el$.notesMove.textContent = html ? "" : "There is no other volume to move apps to.";
     },
 
     onSrcChange: function() {
@@ -491,7 +588,11 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         var dst = this.el$.dst.value, id = this.req.move, row;
         if (!cb) { return; }
         row = cb.parentNode.parentNode;
-        if (!dst) { cb.disabled = true; return; }
+        if (!dst) {
+            cb.disabled = true;
+            row.querySelector(".am-dbnote").textContent = "There is no other volume to move it to.";
+            return;
+        }
         SYNO.SDS.App_Mover.apiCall("databaseinfo", { dest: dst }, (function(resp) {
             if (id !== this.req.move || dst !== this.el$.dst.value) { return; }
             var note = row.querySelector(".am-dbnote"), r, parts = [], i;
@@ -529,8 +630,15 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
     // ---------------------------------------------------------------
     // Backup
     // ---------------------------------------------------------------
+    // Ticks the boxes with these values (after a list was loaded again)
+    reTick: function(listEl, values) {
+        Ext.each(listEl.querySelectorAll("input.am-cb"), function(cb) {
+            if (values.indexOf(cb.value) !== -1 && !cb.disabled) { cb.checked = true; }
+        });
+    },
+
     loadBackupPackages: function() {
-        var id = ++this.req.backup;
+        var id = ++this.req.backup, keep = this.checked(this.el$.listBackup);
         this.el$.listBackup.innerHTML = '<div class="am-empty">Loading\u2026</div>';
         SYNO.SDS.App_Mover.apiCall("listbackuppackages", {}, (function(resp) {
             if (id !== this.req.backup) { return; }
@@ -540,7 +648,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
                 this.setMessage((resp && resp.message) || "Could not list the apps", true);
                 return;
             }
-            items = resp.result || [];
+            items = this.backupItems = resp.result || [];
             if (!items.length) {
                 this.el$.listBackup.innerHTML = '<div class="am-empty">No apps were found.</div>';
                 this.updateBackupButton();
@@ -554,23 +662,143 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
                     ' <span class="am-note">' + this.esc(p.version) + " on " + this.esc(p.volume) + "</span></div>";
             }
             this.el$.listBackup.innerHTML = html;
+            this.reTick(this.el$.listBackup, keep);
             this.wireList(this.el$.listBackup, this.updateBackupButton);
             this.updateBackupButton();
         }).createDelegate(this));
     },
 
     updateBackupButton: function() {
-        var path = this.settings.backuppath;
-        this.el$.notesBackup.textContent = path ?
-            "Backups are saved in " + path + "/syno_app_mover" : "Set the backup location in Settings first.";
-        this.el$.goBackup.disabled = !(path && this.checked(this.el$.listBackup).length > 0);
+        var path = this.settings.backuppath, exists = this.settings.backuppath_exists;
+        var ok = !!(path && exists), lines = [], notes = this.el$.notesBackup;
+        if (!path) {
+            lines.push("Set the backup location in Settings first.");
+        } else if (!exists) {
+            lines.push("The backup location " + path + " was not found. Change it in Settings.");
+        } else {
+            lines.push("Backups are saved in " + path + "/syno_app_mover");
+            lines.push(this.scheduleSummary());
+        }
+        notes.textContent = lines.join("\n");
+        if (path && !exists) { Ext.fly(notes).addClass("am-bad"); } else { Ext.fly(notes).removeClass("am-bad"); }
+        this.el$.goBackup.disabled = !(ok && this.checked(this.el$.listBackup).length > 0);
+        this.el$.goSchedule.disabled = !ok;
+    },
+
+    // ---------------------------------------------------------------
+    // Scheduled backup
+    // ---------------------------------------------------------------
+    loadSchedule: function(callback) {
+        SYNO.SDS.App_Mover.apiCall("getschedule", {}, (function(resp) {
+            if (resp && resp.success) {
+                this.schedule = resp.result;
+                this.updateBackupButton();
+            }
+            if (callback) { callback.call(this, resp); }
+        }).createDelegate(this));
+    },
+
+    describeFrequency: function(type, interval) {
+        if (type === "hour") { return interval === 1 ? "every hour" : "every " + interval + " hours"; }
+        if (type === "week") { return "every week, on Mondays at 00:00"; }
+        if (type === "month") { return "every month, on the first Monday at 00:00"; }
+        return type;
+    },
+
+    // App names for ids (the Backup list has them)
+    appNames: function(ids) {
+        var out = [], i, j, name;
+        for (i = 0; i < ids.length; i++) {
+            name = ids[i];
+            for (j = 0; j < this.backupItems.length; j++) {
+                if (this.backupItems[j].id === ids[i]) { name = this.backupItems[j].name; }
+            }
+            out.push(name);
+        }
+        return out;
+    },
+
+    scheduleSummary: function() {
+        var s = this.schedule, text;
+        if (!s || !s.type) { return "No backup is scheduled."; }
+        text = "Scheduled: " + this.describeFrequency(s.type, s.interval) + ": " + this.appNames(s.apps).join(", ") + ".";
+        if (!s.task_exists) {
+            text += "\nThe scheduled task is missing from Task Scheduler. Open Schedule and save it again.";
+        }
+        return text;
+    },
+
+    openSchedule: function() {
+        var ids = this.checked(this.el$.listBackup), names = this.names(this.el$.listBackup), s = this.schedule || {};
+        this.scheduleApps = ids;
+        this.el$.schApps.textContent = ids.length ? names.join(", ") : "None. Tick the apps to back up in the list first.";
+        this.el$.schType.value = s.type || "week";
+        this.el$.schInterval.value = (s.type === "hour" && s.interval) ? String(s.interval) : "6";
+        this.el$.schCurrent.textContent = s.type ?
+            "Scheduled now: " + this.describeFrequency(s.type, s.interval) + ": " + this.appNames(s.apps).join(", ") + "." +
+            (s.task_exists ? "" : " (The task is missing from Task Scheduler. Saving makes it again.)") :
+            "Nothing is scheduled yet.";
+        this.el$.schStatus.textContent = "";
+        this.el$.schSave.disabled = !ids.length;
+        this.el$.schRemove.style.display = s.type ? "" : "none";
+        this.onScheduleTypeChange();
+        Ext.fly(this.el$.scheduleBackdrop).addClass("open");
+    },
+
+    closeSchedule: function() {
+        Ext.fly(this.el$.scheduleBackdrop).removeClass("open");
+    },
+
+    onScheduleTypeChange: function() {
+        var type = this.el$.schType.value, hint;
+        this.el$.schInterval.style.display = (type === "hour") ? "" : "none";
+        if (type === "week") {
+            hint = "Backs up every Monday at 00:00.";
+        } else if (type === "month") {
+            hint = "Backs up on the first Monday of each month at 00:00. Needs DSM build 64570 or later.";
+        } else {
+            hint = "Backs up every few hours, starting at the next hour.";
+        }
+        this.el$.schHint.textContent = hint;
+    },
+
+    onSaveSchedule: function() {
+        var type = this.el$.schType.value;
+        if (!this.scheduleApps || !this.scheduleApps.length) { return; }
+        this.el$.schStatus.textContent = "Saving\u2026";
+        SYNO.SDS.App_Mover.apiCall("setschedule", {
+            type: type,
+            interval: type === "hour" ? this.el$.schInterval.value : "0",
+            apps: this.scheduleApps.join(",")
+        }, "POST", (function(resp) {
+            if (resp && resp.success) {
+                this.el$.schStatus.textContent = "";
+                this.closeSchedule();
+                this.loadSchedule();
+            } else {
+                this.el$.schStatus.textContent = (resp && resp.message) || "Failed to save the schedule";
+            }
+        }).createDelegate(this));
+    },
+
+    onRemoveSchedule: function() {
+        this.el$.schStatus.textContent = "Removing\u2026";
+        SYNO.SDS.App_Mover.apiCall("removeschedule", {}, "POST", (function(resp) {
+            if (resp && resp.success) {
+                this.el$.schStatus.textContent = "";
+                this.closeSchedule();
+                this.loadSchedule();
+            } else {
+                this.el$.schStatus.textContent = (resp && resp.message) || "Failed to remove the schedule";
+            }
+        }).createDelegate(this));
     },
 
     // ---------------------------------------------------------------
     // Restore
     // ---------------------------------------------------------------
     loadBackups: function() {
-        var id = ++this.req.restore;
+        var id = ++this.req.restore, keep = this.checked(this.el$.listRestore);
         this.el$.listRestore.innerHTML = '<div class="am-empty">Loading\u2026</div>';
         SYNO.SDS.App_Mover.apiCall("listbackups", {}, (function(resp) {
             if (id !== this.req.restore) { return; }
@@ -606,6 +834,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
                 html += "</div>";
             }
             this.el$.listRestore.innerHTML = html;
+            this.reTick(this.el$.listRestore, keep);
             this.wireList(this.el$.listRestore, this.updateRestoreButton);
             this.updateRestoreButton();
         }).createDelegate(this));
@@ -833,11 +1062,80 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             if (resp && resp.success) {
                 this.el$.settingsStatus.textContent = "";
                 this.closeSettings();
-                this.loadSettings();
+                // What the window showed (a "not found" for the old location, the
+                // backups list) came from the old settings: clear it and load it again
+                this.loadSettings(function() {
+                    this.setMessage("", false);
+                    this.showMode(this.mode);
+                });
             } else {
                 this.el$.settingsStatus.textContent = (resp && resp.message) || "Failed to save the settings";
             }
         }).createDelegate(this));
+    },
+
+    // ---------------------------------------------------------------
+    // Folder picker (for the backup location)
+    // ---------------------------------------------------------------
+    openPicker: function() {
+        var cur = (this.el$.setPath.value || "").replace(/\/+$/, "");
+        this.pickerPath = "";
+        Ext.fly(this.el$.pickerBackdrop).addClass("open");
+        // Start in the folder in the box, if it looks like one
+        this.loadFolders(/^\/volume[0-9]+\/./.test(cur) ? cur : "", true);
+    },
+
+    closePicker: function() {
+        Ext.fly(this.el$.pickerBackdrop).removeClass("open");
+    },
+
+    parentPath: function(p) {
+        var i = p.lastIndexOf("/");
+        return i <= 0 ? "" : p.substring(0, i);
+    },
+
+    loadFolders: function(path, fallBackToVolumes) {
+        var id = ++this.req.picker;
+        this.el$.pickerStatus.textContent = "Loading\u2026";
+        SYNO.SDS.App_Mover.apiCall("listfolders", { path: path }, (function(resp) {
+            if (id !== this.req.picker) { return; }
+            if (!resp || !resp.success) {
+                if (fallBackToVolumes && path) {
+                    this.loadFolders("", false);      // the folder in the box isn't there (any more)
+                    return;
+                }
+                this.el$.pickerStatus.textContent = (resp && resp.message) || "Could not list the folders";
+                return;
+            }
+            this.pickerPath = path;
+            this.renderFolders(resp.result || []);
+        }).createDelegate(this));
+    },
+
+    renderFolders: function(items) {
+        var path = this.pickerPath, html = "", i;
+        this.el$.pickerStatus.textContent = "";
+        this.el$.pickerPath.textContent = path || "Volumes";
+        if (path) {
+            html += '<div class="am-pk-row am-pk-up" data-path="' + this.esc(this.parentPath(path)) + '">\u2191 ..</div>';
+        }
+        for (i = 0; i < items.length; i++) {
+            html += '<div class="am-pk-row" data-path="' + this.esc(items[i].path) + '">\u25b8 ' + this.esc(items[i].name) + "</div>";
+        }
+        if (!items.length) {
+            html += '<div class="am-empty">There are no folders here.</div>';
+        }
+        this.el$.pickerList.innerHTML = html;
+        Ext.each(this.el$.pickerList.querySelectorAll(".am-pk-row"), function(row) {
+            Ext.fly(row).on("click", function() { this.loadFolders(row.getAttribute("data-path"), false); }, this);
+        }, this);
+        // The backup location has to be a folder in a volume, not a volume
+        this.el$.pickerSelect.disabled = !/^\/volume[0-9]+\/./.test(path);
+    },
+
+    onPickerSelect: function() {
+        this.el$.setPath.value = this.pickerPath;
+        this.closePicker();
     },
 
     onClose: function() {
