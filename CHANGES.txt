@@ -1,6 +1,7 @@
 v1.0.2
 - Changed to check every 10 seconds if a App Mover scheduled backup task is running.
   - If a scheduled backup task is running App Mover shows the output.
+- Changed to show when the last, move, backup or restore was run with a link to the view the results.
 - Bug fix for not finding python3 in DSM 6 (even when py3k package is installed).
 - Bug fix for printing "Using auto Backup mode" twice when backup scheduled task runs.
 
