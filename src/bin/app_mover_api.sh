@@ -721,6 +721,15 @@ do_listfolders(){
 
 ensure_state_dir
 ensure_conf
+
+# Run from state/: a folder only root can write to, and the web server doesn't
+# serve. Without this the job inherits api.cgi's folder (the package's ui
+# folder, which is served) or whatever folder Task Scheduler uses, and a
+# relative file name in syno_app_mover.sh would be created there. (It once put
+# a file called "tee" in the ui folder.) The detached job and scheduled
+# backups inherit this folder.
+cd "$STATE_DIR" || fail "Failed to change to $STATE_DIR"
+
 self_heal
 
 ACTION="$1"

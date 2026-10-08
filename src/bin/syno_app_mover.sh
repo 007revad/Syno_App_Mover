@@ -2295,7 +2295,7 @@ target_fs(){
 echo "" |& tee -a "$logfile"
 if [[ $auto == "yes" ]]; then
     echo -e "Using auto ${Cyan}${mode}${Off} mode\n"
-    echo -e "Using auto $mode mode\n" >> tee -a "$logfile"
+    echo -e "Using auto $mode mode\n" |& tee -a "$logfile"
 else
     modes=( "Move" "Backup" "Restore" )
     x="1"
@@ -3939,7 +3939,9 @@ fi
 if [[ $all == "yes" ]]; then
     echo -e "Finished ${action,,} all packages\n" |& tee -a "$logfile"
 elif [[ $auto == "yes" ]]; then
-    echo -e "Finished ${action,,} ${pkgs_sorted[*]}\n" |& tee -a "$logfile"
+    # A comma after each app name, except the last one
+    printf -v done_list '%s, ' "${pkgs_sorted[@]}"
+    echo -e "Finished ${action,,} ${done_list%, }\n" |& tee -a "$logfile"
 else
     echo -e "Finished ${action,,} $pkg_name\n" |& tee -a "$logfile"
 fi
