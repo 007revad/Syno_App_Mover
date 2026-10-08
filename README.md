@@ -225,12 +225,17 @@ For more details, see this [GitHub discussion](https://github.com/007revad/Synol
 <br>
 
 <p align="center">Backup schedule settings</p>
-<p align="center"><kbd><img src="/images/backup_schedule.png"></kbd></p>
+<p align="center"><kbd><img src="/images/backup_schedule2.png"></kbd></p>
 
 <br>
 
 <p align="center">Backup selected apps</p>
 <p align="center"><kbd><img src="/images/backup_start.png"></kbd></p>
+
+<br>
+
+<p align="center">Backup output</p>
+<p align="center"><kbd><img src="/images/backup_output.png"></kbd></p>
 
 <br>
 
