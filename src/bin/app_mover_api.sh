@@ -80,6 +80,9 @@ START_LOCK="${STATE_DIR}/startjob.lock"
 RESULTS_MARKER="@@APP_MOVER_RESULTS@@"
 
 MAX_APPS_LEN=4000
+# Monthly schedules need this DSM build or later (the same number and the
+# same buildnumber key task_setup.sh uses; an unreadable build counts as old)
+MONTHLY_MIN_BUILD=64570
 POLL_MAX_BYTES=65536
 LOG_KEEP_DAYS=30
 
@@ -539,7 +542,7 @@ print(m or t[:200] or "Could not set up the scheduled task")
 }
 
 do_getschedule(){ 
-    local type interval apps app out exists="false" first="yes" json_apps=""
+    local type interval apps app out exists="false" first="yes" json_apps="" build monthly="false"
     local -a list
     type="$(conf_get schedule_type)"
     interval="$(conf_get schedule_interval)"
@@ -562,8 +565,12 @@ do_getschedule(){
         first="no"
         json_apps+="$(json_str "$app")"
     done
-    printf '{"type":%s,"interval":%s,"apps":[%s],"task_exists":%s}\n' \
-        "$(json_str "$type")" "$interval" "$json_apps" "$exists"
+    # Can this DSM do monthly? (The window only offers it if it can.)
+    build="$(/usr/syno/bin/synogetkeyvalue /etc.defaults/VERSION buildnumber 2>/dev/null)"
+    [[ $build =~ ^[0-9]+$ ]] || build=0
+    [[ $build -ge $MONTHLY_MIN_BUILD ]] && monthly="true"
+    printf '{"type":%s,"interval":%s,"apps":[%s],"task_exists":%s,"build":%s,"monthly":%s}\n' \
+        "$(json_str "$type")" "$interval" "$json_apps" "$exists" "$build" "$monthly"
 }
 
 do_setschedule(){ 

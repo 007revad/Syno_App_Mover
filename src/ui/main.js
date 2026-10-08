@@ -62,6 +62,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         this.settings = { backuppath: "", backuppath_exists: false, buffer: 50, skip_minutes: 360 };
         this.schedule = { type: "", interval: 0, apps: [], task_exists: false };
         this.backupItems = [];
+        this.viewingResults = false;     // the last job's output is still on screen
         this.job = null;
         this.polling = false;
         this.req = { move: 0, backup: 0, restore: 0, picker: 0 };   // newest request of each list
@@ -123,7 +124,6 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             '  .am-pathrow input { flex:1 1 auto; width:auto; }',
             '  .am-field select { padding:3px; }',
             '  .am-sch-apps { padding:6px; background:#f6f6f6; border:1px solid #ddd; border-radius:4px; max-height:90px; overflow:auto; }',
-            '  .am-sch-remove { float:left; margin-left:0 !important; }',
             '  .am-pk-path { font-weight:bold; color:#444; padding-bottom:6px; word-break:break-all; }',
             '  .am-pk-list { height:260px; overflow:auto; border:1px solid #ccc; border-radius:4px; background:#fff; }',
             '  .am-pk-row { padding:5px 8px; cursor:pointer; border-bottom:1px solid #f0f0f0; }',
@@ -135,16 +135,16 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             '  .am-spinner { width:18px; height:18px; border:3px solid #cfe3f8; border-top-color:#1B8AED; border-radius:50%; animation:am-spin 0.9s linear infinite; }',
             '  .am-spinner.am-done { display:none; }',
             '  @keyframes am-spin { to { transform:rotate(360deg); } }',
-            '  .am-log { flex:1 1 auto; margin:0; overflow:auto; background:#161eb5; color:#ddd; padding:8px; font-family:Verdana,Arial,sans-serif; font-size:12px; white-space:pre-wrap; border-radius:4px; }',
+            '  .am-log { flex:1 1 auto; min-height:0; margin:0; overflow:auto; background:#161eb5; color:#ddd; padding:8px; font-family:Verdana,Arial,sans-serif; font-size:12px; white-space:pre-wrap; border-radius:4px; }',
             '  .am-modal-backdrop { display:none; position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.45); z-index:1000; align-items:center; justify-content:center; }',
             '  .am-modal-backdrop.open { display:flex; }',
             '  .am-modal { position:relative; background:#fff; color:#222; width:380px; max-width:92%; max-height:92%; display:flex; flex-direction:column; padding:20px; border-radius:6px; box-shadow:0 4px 24px rgba(0,0,0,0.35); }',
             '  .am-modal.am-wide { width:660px; height:80%; }',
             '  .am-modal h3 { margin:0 0 12px 0; font-size:15px; flex:0 0 auto; }',
             '  .am-modal-body { flex:1 1 auto; overflow:auto; min-height:0; }',
-            '  .am-modal-text { margin:0; white-space:pre-wrap; font-family:Verdana,Arial,sans-serif; font-size:12px; background:#f6f6f6; border:1px solid #ddd; border-radius:4px; padding:8px; height:100%; overflow:auto; }',
+            '  .am-modal-text { margin:0; white-space:pre-wrap; font-family:Verdana,Arial,sans-serif; font-size:12px; background:#f6f6f6; border:1px solid #ddd; border-radius:4px; padding:8px; height:100%; min-height:0; overflow:auto; }',
             '  .am-modal-close { position:absolute; top:8px; right:10px; border:none !important; background:none !important; font-size:16px !important; cursor:pointer; color:#666 !important; line-height:1; padding:4px !important; }',
-            '  .am-modal-buttons { flex:0 0 auto; text-align:right; margin-top:14px; }',
+            '  .am-modal-buttons { flex:0 0 auto; text-align:right; white-space:nowrap; margin-top:14px; }',
             '  .am-modal-buttons button { margin-left:8px; }',
             '  .am-field { margin-bottom:12px; }',
             '  .am-field label { display:block; margin-bottom:4px; color:#555; }',
@@ -242,11 +242,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             '      <div class="am-field">',
             '        <label>How often</label>',
             '        <div class="am-pathrow">',
-            '          <select class="am-sch-type">',
-            '            <option value="week">Every week</option>',
-            '            <option value="month">Every month</option>',
-            '            <option value="hour">Every few hours</option>',
-            '          </select>',
+            '          <select class="am-sch-type"></select>',
             '          <select class="am-sch-interval">' + this.hourOptions() + '</select>',
             '        </div>',
             '        <div class="am-hint am-sch-hint"></div>',
@@ -254,9 +250,9 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             '      <div class="am-field am-sch-current"></div>',
             '      <div class="am-settings-status am-sch-status"></div>',
             '      <div class="am-modal-buttons">',
-            '        <button type="button" class="am-sch-remove">Remove schedule</button>',
             '        <button type="button" class="am-sch-cancel">Cancel</button>',
-            '        <button type="button" class="am-primary am-sch-save">Save schedule</button>',
+            '        <button type="button" class="am-sch-remove">Remove</button>',
+            '        <button type="button" class="am-primary am-sch-save">Save</button>',
             '      </div>',
             '    </div>',
             '  </div>',
@@ -411,6 +407,9 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
     // ---------------------------------------------------------------
     showMode: function(mode) {
         if (this.job) { return; }
+        // Leaving the last job's output (the lists are loaded again below)
+        this.viewingResults = false;
+        Ext.fly(this.el$.progress).removeClass("active");
         this.mode = mode;
         Ext.each(this.modeButtons, function(btn) {
             if (btn.getAttribute("data-mode") === mode) {
@@ -501,6 +500,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             return;
         }
         this.el$.listMove.innerHTML = '<div class="am-empty">Loading\u2026</div>';
+        this.updateMoveButton();       // nothing is ticked while it loads
         SYNO.SDS.App_Mover.apiCall("listpackages", { volume: src }, (function(resp) {
             if (id !== this.req.move) { return; }      // the selection has changed since
             if (!resp || !resp.success) {
@@ -640,6 +640,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
     loadBackupPackages: function() {
         var id = ++this.req.backup, keep = this.checked(this.el$.listBackup);
         this.el$.listBackup.innerHTML = '<div class="am-empty">Loading\u2026</div>';
+        this.updateBackupButton();     // nothing is ticked while it loads
         SYNO.SDS.App_Mover.apiCall("listbackuppackages", {}, (function(resp) {
             if (id !== this.req.backup) { return; }
             var items, html, i, p;
@@ -732,7 +733,9 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         var ids = this.checked(this.el$.listBackup), names = this.names(this.el$.listBackup), s = this.schedule || {};
         this.scheduleApps = ids;
         this.el$.schApps.textContent = ids.length ? names.join(", ") : "None. Tick the apps to back up in the list first.";
+        this.fillScheduleTypes(!!this.schedule.monthly);
         this.el$.schType.value = s.type || "week";
+        if (this.el$.schType.selectedIndex < 0) { this.el$.schType.value = "week"; }
         this.el$.schInterval.value = (s.type === "hour" && s.interval) ? String(s.interval) : "6";
         this.el$.schCurrent.textContent = s.type ?
             "Scheduled now: " + this.describeFrequency(s.type, s.interval) + ": " + this.appNames(s.apps).join(", ") + "." +
@@ -745,6 +748,14 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         Ext.fly(this.el$.scheduleBackdrop).addClass("open");
     },
 
+    // Monthly only if this DSM build can do it (getschedule says), like Syno Toolbox
+    fillScheduleTypes: function(monthly) {
+        var html = '<option value="week">Every week</option>';
+        if (monthly) { html += '<option value="month">Every month</option>'; }
+        html += '<option value="hour">Every few hours</option>';
+        this.el$.schType.innerHTML = html;
+    },
+
     closeSchedule: function() {
         Ext.fly(this.el$.scheduleBackdrop).removeClass("open");
     },
@@ -755,7 +766,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         if (type === "week") {
             hint = "Backs up every Monday at 00:00.";
         } else if (type === "month") {
-            hint = "Backs up on the first Monday of each month at 00:00. Needs DSM build 64570 or later.";
+            hint = "Backs up on the first Monday of each month at 00:00.";
         } else {
             hint = "Backs up every few hours, starting at the next hour.";
         }
@@ -800,6 +811,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
     loadBackups: function() {
         var id = ++this.req.restore, keep = this.checked(this.el$.listRestore);
         this.el$.listRestore.innerHTML = '<div class="am-empty">Loading\u2026</div>';
+        this.updateRestoreButton();    // nothing is ticked while it loads
         SYNO.SDS.App_Mover.apiCall("listbackups", {}, (function(resp) {
             if (id !== this.req.restore) { return; }
             var items, html, i, b, note;
@@ -1014,10 +1026,13 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         Ext.fly(this.el$.resultsBackdrop).removeClass("open");
         this.job = null;
         this.polling = false;
-        Ext.fly(this.el$.progress).removeClass("active");
+        // The output stays on screen so it can still be read (and scrolled).
+        // The window goes back to normal, and the lists are loaded again,
+        // when the user clicks Move, Backup, Restore, or Settings and then
+        // closes or saves it.
+        this.viewingResults = true;
         Ext.each(this.modeButtons, function(btn) { btn.disabled = false; });
         this.settingsButton.disabled = false;
-        this.showMode(this.mode);
     },
 
     // ---------------------------------------------------------------
@@ -1048,8 +1063,13 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         });
     },
 
-    closeSettings: function() {
+    hideSettings: function() {
         Ext.fly(this.el$.settingsBackdrop).removeClass("open");
+    },
+
+    closeSettings: function() {
+        this.hideSettings();
+        if (this.viewingResults) { this.showMode(this.mode); }
     },
 
     onSaveSettings: function() {
@@ -1061,7 +1081,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         }, "POST", (function(resp) {
             if (resp && resp.success) {
                 this.el$.settingsStatus.textContent = "";
-                this.closeSettings();
+                this.hideSettings();
                 // What the window showed (a "not found" for the old location, the
                 // backups list) came from the old settings: clear it and load it again
                 this.loadSettings(function() {
