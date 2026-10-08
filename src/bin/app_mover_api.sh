@@ -11,6 +11,7 @@
 #       <apps> is a comma separated list of app system names, or "all"
 #       (backup and restore), or "@database" (move, on its own)
 #   app_mover_api.sh jobstatus <job id>:<offset>      (job id 0 = current job)
+#   app_mover_api.sh jobinfo
 #   app_mover_api.sh jobresults
 #   app_mover_api.sh getsettings
 #   app_mover_api.sh getschedule
@@ -40,7 +41,8 @@ BIN_DIR="${PKG_ROOT}/target/bin"
 SELF="${BIN_DIR}/app_mover_api.sh"
 
 # Same PATH appmover-helper sets (DSM 6 calls this script directly)
-export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/syno/bin:/usr/syno/sbin"
+# plus /usr/local/bin for DSM 6 py3k package
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/syno/bin:/usr/syno/sbin:/usr/local/bin"
 
 # Get DSM major version
 dsm=$(/usr/syno/bin/synogetkeyvalue /etc.defaults/VERSION majorversion)
@@ -69,6 +71,7 @@ STATE_DIR="${VAR_DIR}/state"
 CONF_FILE="${STATE_DIR}/syno_app_mover.conf"
 LOG_DIR="${STATE_DIR}/logs"
 JOB_ID_FILE="${STATE_DIR}/job.id"
+JOB_KIND_FILE="${STATE_DIR}/job.kind"
 JOB_PID_FILE="${STATE_DIR}/job.pid"
 JOB_RC_FILE="${STATE_DIR}/job.rc"
 JOB_LOG="${STATE_DIR}/job.log"
@@ -286,9 +289,11 @@ new_job(){
     # start lock and has checked that no job is running.
     find "$LOG_DIR" -maxdepth 1 -name 'syno_app_mover_*.log' -mtime +"$LOG_KEEP_DAYS" -delete 2>/dev/null
     JOB_NEW_ID="$(date +%s)$(printf '%04d' $((RANDOM % 10000)))"
-    rm -f "$JOB_PID_FILE" "$JOB_RC_FILE" "$JOB_ID_FILE"
+    rm -f "$JOB_PID_FILE" "$JOB_RC_FILE" "$JOB_ID_FILE" "$JOB_KIND_FILE"
     : > "$JOB_LOG"
     echo "$JOB_NEW_ID" > "$JOB_ID_FILE"
+    # What kind of job: move, backup, restore or scheduled (set by the caller)
+    echo "${1:-job}" > "$JOB_KIND_FILE"
 }
 
 job_id(){ 
@@ -310,7 +315,7 @@ do_startjob(){
         fail "A job is already running"
     fi
 
-    new_job
+    new_job "$mode"
     id="$JOB_NEW_ID"
     api_log "job $id: $mode ${dest} ${apps}"
 
@@ -414,6 +419,34 @@ print(json.dumps({
     \"lines\": lines, \"partial\": clean(rest) if rest != marker.encode() else \"\",
 }))
 " "$JOB_LOG" "$id" "$offset" "$finished" "$running" "$rc" "$POLL_MAX_BYTES" "$RESULTS_MARKER"
+}
+
+do_jobinfo(){ 
+    # Cheap (no log). The window asks this every few seconds to notice a job
+    # that something else started (a scheduled backup) and to offer the last run.
+    local id rc="null" running="false" kind started finished=0
+    id="$(job_id)"
+    if [[ $id == "0" ]] || [[ ! -f $JOB_LOG ]]; then
+        echo '{"job_id":0,"running":false,"rc":null,"kind":"","started":0,"finished":0}'
+        return 0
+    fi
+    kind="$(cat "$JOB_KIND_FILE" 2>/dev/null)"
+    [[ $kind =~ ^(move|backup|restore|scheduled)$ ]] || kind=""
+    started="$(stat -c '%Y' "$JOB_ID_FILE" 2>/dev/null)"
+    [[ $started =~ ^[0-9]+$ ]] || started=0
+    if job_running; then
+        running="true"
+    elif [[ -f $JOB_RC_FILE ]]; then
+        rc="$(cat "$JOB_RC_FILE")"
+        [[ $rc =~ ^[0-9]+$ ]] || rc="-1"
+        finished="$(stat -c '%Y' "$JOB_RC_FILE" 2>/dev/null)"
+    else
+        rc="-1"       # stopped without saying so
+        finished="$(stat -c '%Y' "$JOB_LOG" 2>/dev/null)"
+    fi
+    [[ $finished =~ ^[0-9]+$ ]] || finished=0
+    printf '{"job_id":%s,"running":%s,"rc":%s,"kind":%s,"started":%s,"finished":%s}\n' \
+        "$id" "$running" "$rc" "$(json_str "$kind")" "$started" "$finished"
 }
 
 do_jobresults(){ 
@@ -641,7 +674,7 @@ do_scheduledbackup(){
     if job_running; then
         fail "A job is already running. This scheduled backup was skipped."
     fi
-    new_job
+    new_job scheduled
     id="$JOB_NEW_ID"
     echo "$$" > "$JOB_PID_FILE"
     rmdir "$START_LOCK" 2>/dev/null
@@ -747,6 +780,10 @@ case "$ACTION" in
     jobstatus)
         [[ $# -eq 1 ]] || fail "jobstatus needs <job id>:<offset>"
         do_jobstatus "$1"
+        ;;
+    jobinfo)
+        [[ $# -eq 0 ]] || fail "jobinfo takes no arguments"
+        do_jobinfo
         ;;
     jobresults)
         do_jobresults

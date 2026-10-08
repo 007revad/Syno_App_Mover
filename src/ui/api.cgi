@@ -16,6 +16,7 @@
 #   databaseinfo dest                 what moving @database to dest would do
 #   startjob mode dest apps           POST. mode is move, backup or restore
 #   jobstatus job                     job is <job id>:<offset>, id 0 = current
+#   jobinfo                           what the current/last job is (no log)
 #   jobresults                        the text for the results window
 #   getsettings
 #   setsettings backuppath buffer skip_minutes     POST
@@ -269,6 +270,16 @@ jobstatus)
     if [ "$RUN_RC" -ne 0 ]; then
         log "[ERROR] jobstatus ${PARAM[job]} failed (rc=${RUN_RC}): ${RUN_OUT}"
         json_response false "${RUN_OUT:-Could not get the job status}" ""
+    else
+        json_response true "" "${RUN_OUT}"
+    fi
+    ;;
+
+jobinfo)
+    run_privileged jobinfo
+    if [ "$RUN_RC" -ne 0 ]; then
+        log "[ERROR] jobinfo failed (rc=${RUN_RC}): ${RUN_OUT}"
+        json_response false "${RUN_OUT:-Could not get the job info}" ""
     else
         json_response true "" "${RUN_OUT}"
     fi

@@ -2295,7 +2295,7 @@ target_fs(){
 echo "" |& tee -a "$logfile"
 if [[ $auto == "yes" ]]; then
     echo -e "Using auto ${Cyan}${mode}${Off} mode\n"
-    echo -e "Using auto $mode mode\n" |& tee -a "$logfile"
+    echo -e "Using auto $mode mode\n" >> "$logfile"
 else
     modes=( "Move" "Backup" "Restore" )
     x="1"

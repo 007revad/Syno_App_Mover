@@ -54,6 +54,8 @@ SYNO.SDS.App_Mover.apiCall = function(action, params, method, callback) {
 Ext.define("SYNO.SDS.App_Mover.MainWindow", {
     extend: "SYNO.SDS.AppWindow",
 
+    watchMs: 10000,       // how often to look for a job something else started
+
     constructor: function(a) {
         this.appInstance = a.appInstance;
         this.pollMs = 1000;         // how often to ask for new output
@@ -63,6 +65,9 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         this.schedule = { type: "", interval: 0, apps: [], task_exists: false };
         this.backupItems = [];
         this.viewingResults = false;     // the last job's output is still on screen
+        this.watching = true;            // looking for jobs something else started
+        this.seenRunning = null;         // id of a job seen running while we weren't following it
+        this.lastInfo = null;
         this.job = null;
         this.polling = false;
         this.req = { move: 0, backup: 0, restore: 0, picker: 0 };   // newest request of each list
@@ -103,6 +108,8 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             '  .am-body button.am-primary:hover { border:1px solid #057FEB; background-color:#057FEB; }',
             '  .am-body button.am-primary[disabled] { border:1px solid #1B8AED; background-color:#1B8AED; }',
             '  .am-message { flex:0 0 auto; min-height:18px; color:#c00; padding-bottom:6px; }',
+            '  .am-lastrun { flex:0 0 auto; display:none; padding-bottom:6px; font-size:12px; color:#777; }',
+            '  .am-link { color:#1B8AED; cursor:pointer; text-decoration:underline; margin-left:4px; }',
             '  .am-panel { flex:1 1 auto; display:none; flex-direction:column; min-height:0; }',
             '  .am-panel.active { display:flex; }',
             '  .am-row { flex:0 0 auto; display:flex; align-items:center; gap:8px; padding-bottom:8px; }',
@@ -171,6 +178,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             '    <button type="button" class="am-settings">Settings</button>',
             '  </div>',
             '  <div class="am-message"></div>',
+            '  <div class="am-lastrun"></div>',
             '  <div class="am-panel am-panel-move active">',
             '    <div class="am-row">',
             '      <label>Move apps from</label><select class="am-src"></select>',
@@ -299,7 +307,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         var el = this.body.dom;
         var q = function(sel) { return el.querySelector(sel); };
         this.el$ = {
-            message: q(".am-message"),
+            message: q(".am-message"), lastRun: q(".am-lastrun"),
             src: q(".am-src"), dst: q(".am-dst"),
             listMove: q(".am-list-move"), listBackup: q(".am-list-backup"), listRestore: q(".am-list-restore"),
             notesMove: q(".am-notes-move"), notesBackup: q(".am-notes-backup"), notesRestore: q(".am-notes-restore"),
@@ -353,6 +361,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         Ext.fly(el).on("contextmenu", function(ev) { ev.stopPropagation(); });
 
         this.start();
+        this.watchLater();
     },
 
     start: function() {
@@ -373,7 +382,97 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
                 return;
             }
             this.loadVolumes();
+            this.checkJob();         // shows "Last run" if there was one
         }).createDelegate(this));
+    },
+
+    // ---------------------------------------------------------------
+    // A job that something else started (a scheduled backup), and the last run
+    //
+    // Every few seconds, while the window isn't following a job of its own, it
+    // asks what the current or last job is (jobinfo: no log). If one is running
+    // it jumps to its output, but only if that can't get in the way: nothing is
+    // ticked, no dialog is open and the user isn't reading the last run. If it
+    // can't, a line under the toolbar says so and offers View.
+    // ---------------------------------------------------------------
+    watchLater: function() {
+        if (!this.watching) { return; }
+        window.setTimeout(this.watchTick.createDelegate(this), this.watchMs);
+    },
+
+    watchTick: function() {
+        if (!this.watching) { return; }
+        if (this.job) { this.watchLater(); return; }       // following its own job
+        this.checkJob(this.watchLater.createDelegate(this));
+    },
+
+    checkJob: function(done) {
+        SYNO.SDS.App_Mover.apiCall("jobinfo", {}, (function(resp) {
+            if (this.watching && !this.job && resp && resp.success) { this.onJobInfo(resp.result); }
+            if (done) { done(); }
+        }).createDelegate(this));
+    },
+
+    kindText: function(kind) {
+        return { move: "move", backup: "backup", restore: "restore", scheduled: "scheduled backup" }[kind] || "job";
+    },
+
+    resultText: function(rc) {
+        if (rc === 0) { return "finished OK"; }
+        if (rc === -1) { return "stopped unexpectedly"; }
+        return "failed (exit code " + rc + ")";
+    },
+
+    canInterrupt: function() {
+        var e = this.el$, isOpen = function(el) { return el.classList.contains("open"); };
+        if (this.job || this.viewingResults || this.pending) { return false; }
+        if (isOpen(e.confirmBackdrop) || isOpen(e.resultsBackdrop) || isOpen(e.settingsBackdrop) ||
+            isOpen(e.scheduleBackdrop) || isOpen(e.pickerBackdrop)) { return false; }
+        return this.checked(e.listMove).length + this.checked(e.listBackup).length + this.checked(e.listRestore).length === 0;
+    },
+
+    onJobInfo: function(info) {
+        var kind = this.kindText(info.kind), when;
+        this.lastInfo = info;
+        if (info.running) {
+            this.seenRunning = info.job_id;
+            if (this.canInterrupt()) {
+                this.beginProgress(info.job_id, "A " + kind + " is running");
+                return;
+            }
+            this.showLastRun("A " + kind + " is running.", "View", info.job_id, true);
+        } else if (info.job_id && this.seenRunning === info.job_id) {
+            this.showLastRun("The " + kind + " has finished (" + this.resultText(info.rc) + ").", "View results", info.job_id, true);
+        } else if (info.job_id) {
+            when = new Date((info.finished || info.started) * 1000).toLocaleString();
+            this.showLastRun("Last run: " + kind + ", " + when + ", " + this.resultText(info.rc) + ".", "View", info.job_id, false);
+        } else {
+            this.hideLastRun();
+        }
+    },
+
+    showLastRun: function(text, linkText, jobId, isAlert) {
+        var el = this.el$.lastRun, link;
+        if (this.job || this.viewingResults) { this.hideLastRun(); return; }
+        el.innerHTML = this.esc(text) + ' <span class="am-link">' + this.esc(linkText) + "</span>";
+        el.style.color = isAlert ? "#b36b00" : "#777";
+        el.style.display = "block";
+        link = el.querySelector(".am-link");
+        Ext.fly(link).on("click", function() { this.viewJob(jobId); }, this);
+    },
+
+    hideLastRun: function() {
+        this.el$.lastRun.style.display = "none";
+        this.el$.lastRun.innerHTML = "";
+    },
+
+    viewJob: function(jobId) {
+        var info = this.lastInfo, title = "Last run";
+        if (this.job) { return; }
+        if (info && info.job_id === jobId && info.running) { title = "A " + this.kindText(info.kind) + " is running"; }
+        this.seenRunning = null;
+        this.hideLastRun();
+        this.beginProgress(jobId, title);
     },
 
     // ---------------------------------------------------------------
@@ -420,6 +519,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         // Leaving the last job's output (the lists are loaded again below)
         this.viewingResults = false;
         Ext.fly(this.el$.progress).removeClass("active");
+        this.checkJob();
         this.mode = mode;
         Ext.each(this.modeButtons, function(btn) {
             if (btn.getAttribute("data-mode") === mode) {
@@ -503,6 +603,13 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
 
     loadMovePackages: function() {
         var src = this.el$.src.value, id = ++this.req.move;
+        // Keep the ticks if it is the same volume (not if another one was chosen)
+        if (this.moveSrc !== src) {
+            this.moveKeep = [];
+        } else if (this.el$.listMove.querySelector("input.am-cb")) {
+            this.moveKeep = this.checked(this.el$.listMove);
+        }
+        this.moveSrc = src;
         this.dbinfo = null;
         if (!src) {
             this.el$.listMove.innerHTML = '<div class="am-empty">No apps were found.</div>';
@@ -548,6 +655,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
                 ' <span class="am-warn am-dbnote"></span></div>';
         }
         this.el$.listMove.innerHTML = html;
+        this.reTick(this.el$.listMove, this.moveKeep || []);
         this.wireList(this.el$.listMove, this.onMoveListChange);
         this.updateMoveButton();
     },
@@ -648,7 +756,9 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
     },
 
     loadBackupPackages: function() {
-        var id = ++this.req.backup, keep = this.checked(this.el$.listBackup);
+        var id = ++this.req.backup, keep;
+        if (this.el$.listBackup.querySelector("input.am-cb")) { this.backupKeep = this.checked(this.el$.listBackup); }
+        keep = this.backupKeep || [];
         this.el$.listBackup.innerHTML = '<div class="am-empty">Loading\u2026</div>';
         this.updateBackupButton();     // nothing is ticked while it loads
         SYNO.SDS.App_Mover.apiCall("listbackuppackages", {}, (function(resp) {
@@ -819,7 +929,9 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
     // Restore
     // ---------------------------------------------------------------
     loadBackups: function() {
-        var id = ++this.req.restore, keep = this.checked(this.el$.listRestore);
+        var id = ++this.req.restore, keep;
+        if (this.el$.listRestore.querySelector("input.am-cb")) { this.restoreKeep = this.checked(this.el$.listRestore); }
+        keep = this.restoreKeep || [];
         this.el$.listRestore.innerHTML = '<div class="am-empty">Loading\u2026</div>';
         this.updateRestoreButton();    // nothing is ticked while it loads
         SYNO.SDS.App_Mover.apiCall("listbackups", {}, (function(resp) {
@@ -1171,6 +1283,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
     onClose: function() {
         // The job (if any) carries on without the window
         this.polling = false;
+        this.watching = false;
         SYNO.SDS.App_Mover.MainWindow.superclass.onClose.apply(this, arguments);
         this.doClose();
         return true;
