@@ -46,6 +46,8 @@ chmod +x "$BIN_DIR/syno_app_mover.sh" 2>/dev/null
 log_message "Set execute permissions for syno_app_mover.sh"
 chmod +x "$BIN_DIR/task_setup.sh" 2>/dev/null
 log_message "Set execute permissions for task_setup.sh"
+chmod +x "$BIN_DIR/check_share_volume.sh" 2>/dev/null
+log_message "Set execute permissions for check_share_volume.sh"
 
 
 # Lock down app_mover_api.sh

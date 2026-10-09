@@ -1,3 +1,8 @@
+v1.0.3
+- Changed to update /volumeN backup path in config file if the shared folder has been moved to a different volume.
+- Improved the messages when clicking on Backup or Restore when you haven't set the backup path.
+- Changed package's icon to be larger.
+
 v1.0.2
 - Changed to check every 10 seconds if a App Mover scheduled backup task is running.
   - If a scheduled backup task is running App Mover shows the output.

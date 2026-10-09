@@ -56,6 +56,8 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
 
     watchMs: 10000,       // how often to look for a job something else started
 
+    noPathMessage: "Set the backup location in Settings first.",
+
     constructor: function(a) {
         this.appInstance = a.appInstance;
         this.pollMs = 1000;         // how often to ask for new output
@@ -148,10 +150,10 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             '  .am-log::-webkit-scrollbar-track { background:#0f1680; }',
             '  .am-log::-webkit-scrollbar-thumb { background:#9bb8ee; border:3px solid #0f1680; border-radius:8px; min-height:40px; }',
             '  .am-log::-webkit-scrollbar-thumb:hover { background:#c3d6f7; }',
-            '  .am-list, .am-modal-text, .am-sch-apps, .am-pk-list { scrollbar-color:#6b7c93 #e9edf2; scrollbar-width:auto; }',
+            '  .am-list, .am-modal-text, .am-sch-apps, .am-pk-list { scrollbar-color:#8b8b8b #e9edf2; scrollbar-width:auto; }',
             '  .am-list::-webkit-scrollbar, .am-modal-text::-webkit-scrollbar, .am-sch-apps::-webkit-scrollbar, .am-pk-list::-webkit-scrollbar { width:14px; }',
             '  .am-list::-webkit-scrollbar-track, .am-modal-text::-webkit-scrollbar-track, .am-sch-apps::-webkit-scrollbar-track, .am-pk-list::-webkit-scrollbar-track { background:#e9edf2; }',
-            '  .am-list::-webkit-scrollbar-thumb, .am-modal-text::-webkit-scrollbar-thumb, .am-sch-apps::-webkit-scrollbar-thumb, .am-pk-list::-webkit-scrollbar-thumb { background:#6b7c93; border:3px solid #e9edf2; border-radius:8px; min-height:40px; }',
+            '  .am-list::-webkit-scrollbar-thumb, .am-modal-text::-webkit-scrollbar-thumb, .am-sch-apps::-webkit-scrollbar-thumb, .am-pk-list::-webkit-scrollbar-thumb { background:#8b8b8b; border:3px solid #e9edf2; border-radius:8px; min-height:40px; }',
             '  .am-list::-webkit-scrollbar-thumb:hover, .am-modal-text::-webkit-scrollbar-thumb:hover, .am-sch-apps::-webkit-scrollbar-thumb:hover, .am-pk-list::-webkit-scrollbar-thumb:hover { background:#4f607a; }',
             '  .am-modal-backdrop { display:none; position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.45); z-index:1000; align-items:center; justify-content:center; }',
             '  .am-modal-backdrop.open { display:flex; }',
@@ -230,7 +232,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             '        <label>Backup location</label>',
             '        <div class="am-pathrow">',
             '          <input type="text" class="am-set-path" placeholder="/volume1/backups">',
-            '          <button type="button" class="am-browse">Browse\u2026</button>',
+            '          <button type="button" class="am-browse">Browse</button>',
             '        </div>',
             '        <div class="am-hint">An existing folder, like /volume1/backups. Letters, numbers and . _ + - only.</div>',
             '      </div>',
@@ -793,7 +795,17 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
         var path = this.settings.backuppath, exists = this.settings.backuppath_exists;
         var ok = !!(path && exists), lines = [], notes = this.el$.notesBackup;
         if (!path) {
-            lines.push("Set the backup location in Settings first.");
+            lines.push(this.noPathMessage);
+            // also at the top, in red, if this tab is showing
+            if (this.panels.backup.classList.contains("active")) { this.setMessage(this.noPathMessage, true); }
+        } else if (this.el$.message.textContent === this.noPathMessage) {
+            this.setMessage("", false);
+            if (!exists) {
+                lines.push("The backup location " + path + " was not found. Change it in Settings.");
+            } else {
+                lines.push("Backups are saved in " + path + "/syno_app_mover");
+                lines.push(this.scheduleSummary());
+            }
         } else if (!exists) {
             lines.push("The backup location " + path + " was not found. Change it in Settings.");
         } else {
@@ -929,7 +941,7 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
     // Restore
     // ---------------------------------------------------------------
     loadBackups: function() {
-        var id = ++this.req.restore, keep;
+        var id = ++this.req.restore, keep, msg;
         if (this.el$.listRestore.querySelector("input.am-cb")) { this.restoreKeep = this.checked(this.el$.listRestore); }
         keep = this.restoreKeep || [];
         this.el$.listRestore.innerHTML = '<div class="am-empty">Loading\u2026</div>';
@@ -939,7 +951,10 @@ Ext.define("SYNO.SDS.App_Mover.MainWindow", {
             var items, html, i, b, note;
             if (!resp || !resp.success) {
                 this.el$.listRestore.innerHTML = "";
-                this.setMessage((resp && resp.message) || "Could not list the backups", true);
+                msg = (resp && resp.message) || "Could not list the backups";
+                // The list script's own message names a file. Say what to do instead.
+                if (/^backuppath missing from /.test(msg)) { msg = this.noPathMessage; }
+                this.setMessage(msg, true);
                 this.backups = [];
                 this.updateRestoreButton();
                 return;
