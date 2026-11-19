@@ -136,7 +136,7 @@ jobs:
             kvmx64)    expect_arch="x86-64" ;;
             rtd1296)   expect_arch="ARM aarch64" ;;
             armada38x) expect_arch="ARM" ;;
-            evansport) expect_arch="Intel 80386" ;;
+            evansport) expect_arch="Intel (80386|i386)" ;;
             *) echo "::error::No expected ELF arch mapped for '${{ matrix.arch }}'"; exit 1 ;;
           esac
 
@@ -158,13 +158,12 @@ jobs:
 
           file_out=$(file -b "$helper")
           echo "${HELPER_NAME}-helper: $file_out"
-          case "$file_out" in
-            *"$expect_arch"*) echo "OK: matches expected arch '$expect_arch'" ;;
-            *)
-              echo "::error::${HELPER_NAME}-helper in $spk doesn't look like '$expect_arch' (got: $file_out) - wrong-arch compiler was likely used"
-              exit 1
-              ;;
-          esac
+          if echo "$file_out" | grep -Eq "$expect_arch"; then
+            echo "OK: matches expected arch '$expect_arch'"
+          else
+            echo "::error::${HELPER_NAME}-helper doesn't look like '$expect_arch' (got: $file_out) - wrong binary was selected"
+            exit 1
+          fi
 
           rm -rf "$workdir"
 
@@ -200,7 +199,7 @@ jobs:
             dsm6="${dsm6/${{ steps.dsm_suffix.outputs.suffix }}/DSM-6.x}"
             tmpdir=$(mktemp -d)
             tar -xf "$f" -C "$tmpdir"
-            sed -i 's/arch=".*"/arch="noarch"/' "$tmpdir/INFO"
+            sed -i 's/^arch=".*"/arch="noarch"/' "$tmpdir/INFO"
             sed -i -E 's/os_min_ver="7\.0-[0-9]+"/os_min_ver="6.0-7321"/' "$tmpdir/INFO"
             sed -i 's/os_max_ver="9.9-99999"/os_max_ver="6.9-99999"/' "$tmpdir/INFO"
             sed -i -E 's/install_dep_packages="[^"]*"/install_dep_packages="py3k>=3.8.6-0154"/' "$tmpdir/INFO"
@@ -234,57 +233,6 @@ jobs:
     needs: [build-spk]
     if: github.event_name == 'release' && github.event.action == 'published'
     steps:
-      - name: Checkout this repo (for synology/PACKAGE_ICON.PNG and package.json)
-        uses: actions/checkout@v6
-
-      - name: Checkout 007revad.github.io (for thumbnails/)
-        uses: actions/checkout@v6
-        with:
-          repository: 007revad/007revad.github.io
-          token: ${{ secrets.SYNC_TOKEN }}
-          path: _github_io
-
-      - name: Install ImageMagick
-        run: sudo apt-get install -y --no-install-recommends imagemagick
-
-      - name: Resize icon and push thumbnail
-        run: |
-          set -euo pipefail
-
-          # Read package ID from package.json
-          # package.json may be at the repo root or under synology/ depending on the repo
-          if [ -f "synology/package.json" ]; then
-            PKG_JSON="synology/package.json"
-          elif [ -f "package.json" ]; then
-            PKG_JSON="package.json"
-          else
-            echo "ERROR: package.json not found" >&2
-            exit 1
-          fi
-
-          PKG_NAME=$(jq -r '.package' "${PKG_JSON}")
-          DEST="_github_io/spkrepo/thumbnails/${PKG_NAME}_120.png"
-
-          # Resize 256x256 PACKAGE_ICON.PNG → 120x120 PNG
-          mkdir -p "_github_io/spkrepo/thumbnails"
-          /usr/bin/convert synology/PACKAGE_ICON.PNG \
-            -resize 120x120 \
-            -gravity center \
-            -extent 120x120 \
-            "${DEST}"
-
-          # Commit and push if the thumbnail changed (or is new)
-          cd _github_io
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "spkrepo/thumbnails/${PKG_NAME}_120.png"
-          if git diff --cached --quiet; then
-            echo "Thumbnail unchanged — skipping commit."
-          else
-            git commit -m "chore: update spkrepo thumbnail for ${PKG_NAME} [skip ci]"
-            git push
-          fi
-
       - name: Trigger spkrepo index rebuild
         run: |
           curl -fsSL \
