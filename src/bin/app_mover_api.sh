@@ -58,6 +58,7 @@ fi
 
 MOVER="${BIN_DIR}/syno_app_mover.sh"
 LIST_SCRIPT="${BIN_DIR}/syno_app_mover_list.sh"
+CHECK_SHARE="${BIN_DIR}/check_share_volume.sh"
 TASK_SETUP="${BIN_DIR}/task_setup.sh"
 API_LOG_FILE="${VAR_DIR}/api.log"
 TASK_NAME="App Mover Backup"
@@ -191,6 +192,27 @@ get_backuppath(){
     /usr/syno/bin/synogetkeyvalue "$CONF_FILE" backuppath
 }
 
+fix_backuppath(){
+    # The backup location's shared folder may have been moved to another
+    # volume. If so, update the saved backuppath to the share's current volume
+    # (same check_share_volume.sh as Syno_Toolbox and SynoArchiveClone). If the
+    # share is gone the setting is left as it is, and the usual "Backup
+    # location ... not found" message follows. Always returns 0 and prints
+    # nothing (check_share_volume.sh logs to api.log itself).
+    local bp
+    bp="$(get_backuppath)"
+    [[ -n $bp ]] || return 0    # not set (check_share_volume.sh needs the key to have a value)
+    # Same pattern do_setsettings enforces, so nothing else reaches synoshare
+    [[ $bp =~ ^/volume[1-9][0-9]?(/[A-Za-z0-9._+-]+)+$ ]] || return 0
+    [[ -f $CHECK_SHARE ]] || return 0
+    bash "$CHECK_SHARE" --key=backuppath --path="$bp" > /dev/null 2>&1
+    # synosetkeyvalue may have changed the file's owner or mode, and the list
+    # helper (package user) has to be able to read it
+    chown "root:${PKG_NAME}" "$CONF_FILE" 2>/dev/null
+    chmod 644 "$CONF_FILE" 2>/dev/null
+    return 0
+}
+
 validate_job(){ 
     # $1 mode, $2 dest, $3 apps. On a problem: message on stdout, return 1
     local mode="$1" dest="$2" apps="$3" app list backuppath
@@ -205,6 +227,13 @@ validate_job(){
         valid_volume "$dest" || { echo "Invalid destination volume '$dest'"; return 1; }
     elif [[ $dest != "-" ]]; then
         echo "A destination volume is only for move"; return 1
+    fi
+
+    # Before anything below reads the backup location (the restore check for
+    # each app, and the final check): put it on the share's current volume.
+    # This covers startjob, the detached job, setschedule and scheduled backups.
+    if [[ $mode == "backup" ]] || [[ $mode == "restore" ]]; then
+        fix_backuppath
     fi
 
     [[ -n $apps ]] || { echo "No apps selected"; return 1; }
@@ -491,6 +520,8 @@ print(json.dumps({
 
 do_getsettings(){ 
     local backuppath buffer skip exists
+    # The share may have moved to another volume since the path was saved
+    fix_backuppath
     backuppath="$(/usr/syno/bin/synogetkeyvalue "$CONF_FILE" backuppath)"
     buffer="$(/usr/syno/bin/synogetkeyvalue "$CONF_FILE" buffer)"
     skip="$(/usr/syno/bin/synogetkeyvalue "$CONF_FILE" skip_minutes)"
@@ -804,6 +835,8 @@ case "$ACTION" in
         # location (a shared folder only lets in the users its permissions
         # name). The list script only reads, and prints just JSON.
         [[ $# -eq 0 ]] || fail "listbackups takes no arguments"
+        # The list script reads backuppath from the conf file
+        fix_backuppath
         out="$(bash "$LIST_SCRIPT" listbackups 2>&1)" || fail "$out"
         printf '%s\n' "$out"
         ;;
