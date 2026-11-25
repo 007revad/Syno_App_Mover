@@ -71,7 +71,7 @@ parse_kv() {
 
 # --------- 2a. JSON/privilege helpers ----------------------------
 
-json_response() {
+json_response() { 
     local ok="$1" msg="$2" data="$3"
     local msg_json
     msg_json=$(echo "$msg" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')
@@ -82,7 +82,7 @@ json_response() {
     fi
 }
 
-run_privileged() {
+run_privileged() { 
     # DSM 7's package CGI runs sandboxed enough to need real escalation
     # (setuid helper); DSM 6 doesn't - confirmed against Drive Info's
     # existing dsm-version branch. Same split as Syno_Toolbox's api.cgi.
@@ -94,7 +94,7 @@ run_privileged() {
     RUN_RC=$?
 }
 
-run_list() {
+run_list() { 
     # The list verbs only read, so they don't need root: this calls the
     # script directly instead of going through run_privileged/the helper.
     # (Tested as the package user inside DSM 7's CGI sandbox.)
@@ -121,33 +121,38 @@ run_list() {
 # config's "allUsers" lets any DSM user open the window, which is why this
 # checks for an administrator and not just a login.
 
-is_admin() {
-    # $1 = user name, already checked against a strict pattern by the caller
-    awk -F: -v u="$1" '
+is_admin() { 
+    # $1 = user name, any characters (non-English letters are fine). It goes
+    # in through the environment, not awk -v, so awk doesn't process escapes
+    # in it, and it is only ever compared, never run.
+    U="$1" awk -F: '
         $1=="administrators" {
             n=split($4,a,",")
-            for (i=1;i<=n;i++) if (a[i]==u) found=1
+            for (i=1;i<=n;i++) if (a[i]==ENVIRON["U"]) found=1
         }
         END { exit !found }' /etc/group
 }
 
-require_auth() {
-    local user
+require_auth() { 
+    local user reason
     user=$(/usr/syno/synoman/webman/modules/authenticate.cgi 2>/dev/null | head -n1)
 
-    if [[ "$user" =~ ^[A-Za-z0-9._@-]+$ ]]; then
+    if [[ -n "$user" ]]; then
         if is_admin "$user"; then
             return 0
         fi
-        log "[ERROR] ${ACTION}: not authorised (user=${user} is not an administrator)"
+        reason="DSM user '${user}' is not a local administrator"
     else
-        log "[ERROR] ${ACTION}: not authorised (no valid DSM session)"
+        reason="No valid DSM session (not logged in, or the session token was not sent)"
     fi
-    json_response false "Not authorised" ""
+    # The reason goes to the log and to the window (main.js shows resp.message).
+    # The name is the caller's own, and json_response escapes it.
+    log "[ERROR] ${ACTION}: not authorised (${reason})"
+    json_response false "Not authorised: ${reason}" ""
     exit 0
 }
 
-require_post() {
+require_post() { 
     # Actions that change anything must not be possible with a plain link
     if [[ "$REQUEST_METHOD" != "POST" ]]; then
         log "[ERROR] ${ACTION}: needs POST (was ${REQUEST_METHOD})"
